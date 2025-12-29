@@ -17,7 +17,7 @@ async function bootstrap() {
 
   // Swagger setup
   const config = new DocumentBuilder()
-    .setTitle('Jamulus Demo API')
+    .setTitle('Jam Backend API')
     .setDescription('Voice Social Platform API Documentation')
     .setVersion('1.0')
     .addBearerAuth() // JWT token için

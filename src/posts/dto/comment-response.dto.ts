@@ -5,7 +5,7 @@ export class CommentAuthorDto {
   username: string;
 
   @ApiProperty({ example: 'https://example.com/avatar.jpg', required: false })
-  avatar?: string;
+  avatar_url?: string;
 }
 
 export class CommentResponseDto {

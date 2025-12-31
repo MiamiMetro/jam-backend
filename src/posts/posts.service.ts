@@ -449,7 +449,7 @@ export class PostsService {
       postId: newComment.postId,
       author: {
         username: author?.username || '',
-        avatar: author?.avatarUrl || undefined,
+        avatar_url: author?.avatarUrl || undefined,
       },
       content: newComment.text || undefined,
       audio_url: newComment.audioUrl || null,

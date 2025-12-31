@@ -104,7 +104,7 @@ export class UsersService {
         data: usersList.map((user) => ({
           id: user.id,
           username: user.username,
-          avatar: user.avatarUrl || undefined,
+          avatar_url: user.avatarUrl || undefined,
           status: 'offline', // TODO: Implement online status tracking
           statusMessage: '', // TODO: Add status message field to schema if needed
         })),
@@ -165,7 +165,7 @@ export class UsersService {
       data: usersList.map((user) => ({
         id: user.id,
         username: user.username,
-        avatar: user.avatarUrl || undefined,
+        avatar_url: user.avatarUrl || undefined,
         status: 'online', // Placeholder - will be implemented later
         statusMessage: '', // TODO: Add status message field to schema if needed
       })),

@@ -4,11 +4,69 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private supabaseService: SupabaseService) {}
+
+  @Post('register')
+  @ApiOperation({ summary: 'Register a new user' })
+  async register(@Body() registerDto: RegisterDto) {
+    const supabase = this.supabaseService.getClient();
+
+    // 1. Supabase'de kullanıcı oluştur
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: registerDto.email,
+      password: registerDto.password,
+    });
+
+    if (authError) {
+      return { error: authError.message };
+    }
+
+    if (!authData.user) {
+      return { error: 'Failed to create user' };
+    }
+
+    // 2. Username benzersiz mi kontrol et
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', registerDto.username)
+      .single();
+
+    if (existingProfile) {
+      // Kullanıcı oluşturuldu ama profile oluşturulamadı, geri al
+      return { error: 'Username already taken' };
+    }
+
+    // 3. Profile oluştur
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert({
+        id: authData.user.id,
+        username: registerDto.username,
+        display_name: registerDto.display_name || registerDto.username,
+        avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${registerDto.username}`,
+      });
+
+    if (profileError) {
+      return { error: 'Failed to create profile: ' + profileError.message };
+    }
+
+    // 4. Token döndür
+    return {
+      message: 'Registration successful',
+      access_token: authData.session?.access_token,
+      user: {
+        id: authData.user.id,
+        email: authData.user.email,
+        username: registerDto.username,
+      },
+    };
+  }
 
   @Post('login')
   @ApiOperation({ summary: 'Login and get access token' })

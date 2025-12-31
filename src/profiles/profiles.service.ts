@@ -1,75 +1,111 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { DbService } from '../db/db.service';
+import { profiles } from '../db/schema';
+import { eq, and, ne } from 'drizzle-orm';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class ProfilesService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(private dbService: DbService) {}
 
   // Kullanıcının kendi profilini getir
   async getMyProfile(userId: string) {
-    const supabase = this.supabaseService.getClient();
+    const [profile] = await this.dbService.db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.id, userId))
+      .limit(1);
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (error || !data) {
+    if (!profile) {
       throw new NotFoundException('Profile not found');
     }
 
-    return data;
+    return {
+      id: profile.id,
+      username: profile.username,
+      display_name: profile.displayName || '',
+      avatar_url: profile.avatarUrl || '',
+      bio: profile.bio || '',
+      created_at: profile.createdAt.toISOString(),
+    };
   }
 
   // Username ile profil getir (public)
   async getProfileByUsername(username: string) {
-    const supabase = this.supabaseService.getClient();
+    const [profile] = await this.dbService.db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.username, username))
+      .limit(1);
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('username', username)
-      .single();
-
-    if (error || !data) {
+    if (!profile) {
       throw new NotFoundException('Profile not found');
     }
 
-    return data;
+    return {
+      id: profile.id,
+      username: profile.username,
+      display_name: profile.displayName || '',
+      avatar_url: profile.avatarUrl || '',
+      bio: profile.bio || '',
+      created_at: profile.createdAt.toISOString(),
+    };
   }
 
   // Profil güncelle
   async updateProfile(userId: string, updateDto: UpdateProfileDto) {
-    const supabase = this.supabaseService.getClient();
-
     // Eğer username değiştiriliyorsa, benzersizlik kontrolü
     if (updateDto.username) {
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', updateDto.username)
-        .neq('id', userId)
-        .single();
+      const [existingProfile] = await this.dbService.db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(
+          and(
+            eq(profiles.username, updateDto.username),
+            ne(profiles.id, userId)
+          )
+        )
+        .limit(1);
 
       if (existingProfile) {
         throw new BadRequestException('Username already taken');
       }
     }
 
-    // Profili güncelle
-    const { data, error } = await supabase
-      .from('profiles')
-      .update(updateDto)
-      .eq('id', userId)
-      .select()
-      .single();
+    // Update data object
+    const updateData: any = {
+      updatedAt: new Date(),
+    };
+    if (updateDto.username !== undefined)
+      updateData.username = updateDto.username;
+    if (updateDto.display_name !== undefined)
+      updateData.displayName = updateDto.display_name;
+    if (updateDto.avatar_url !== undefined)
+      updateData.avatarUrl = updateDto.avatar_url;
+    if (updateDto.bio !== undefined) updateData.bio = updateDto.bio;
 
-    if (error) {
+    // Profili güncelle
+    const [updatedProfile] = await this.dbService.db
+      .update(profiles)
+      .set(updateData)
+      .where(eq(profiles.id, userId))
+      .returning();
+
+    if (!updatedProfile) {
       throw new BadRequestException('Failed to update profile');
     }
 
-    return data;
+    return {
+      id: updatedProfile.id,
+      username: updatedProfile.username,
+      display_name: updatedProfile.displayName || '',
+      avatar_url: updatedProfile.avatarUrl || '',
+      bio: updatedProfile.bio || '',
+      created_at: updatedProfile.createdAt.toISOString(),
+    };
   }
 }

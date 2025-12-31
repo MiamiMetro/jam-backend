@@ -1,17 +1,23 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Delete, 
-  Body, 
-  Param, 
+import {
+  Controller,
+  Post,
+  Get,
+  Delete,
+  Body,
+  Param,
   Query,
-  UseGuards, 
+  UseGuards,
   ParseUUIDPipe,
   ParseIntPipe,
-  DefaultValuePipe
+  DefaultValuePipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiTags,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -28,7 +34,7 @@ export class MessagesController {
   @ApiOperation({ summary: 'Send a message to a user' })
   async sendMessage(
     @CurrentUser() user: any,
-    @Body() sendMessageDto: SendMessageDto,
+    @Body() sendMessageDto: SendMessageDto
   ) {
     return this.messagesService.sendMessage(user.id, sendMessageDto);
   }
@@ -48,9 +54,14 @@ export class MessagesController {
     @CurrentUser() user: any,
     @Param('userId', ParseUUIDPipe) userId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
   ) {
-    return this.messagesService.getMessagesWithUser(user.id, userId, limit, offset);
+    return this.messagesService.getMessagesWithUser(
+      user.id,
+      userId,
+      limit,
+      offset
+    );
   }
 
   @Delete(':messageId')
@@ -58,7 +69,7 @@ export class MessagesController {
   @ApiParam({ name: 'messageId', description: 'Message ID' })
   async deleteMessage(
     @CurrentUser() user: any,
-    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string
   ) {
     return this.messagesService.deleteMessage(messageId, user.id);
   }

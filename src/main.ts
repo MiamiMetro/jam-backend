@@ -12,7 +12,7 @@ async function bootstrap() {
       whitelist: true, // DTO'da olmayan alanları sil
       forbidNonWhitelisted: true, // Fazla alan varsa hata ver
       transform: true, // Otomatik type dönüşümü
-    }),
+    })
   );
 
   // Swagger setup

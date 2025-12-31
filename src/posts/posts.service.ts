@@ -1,98 +1,117 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { DbService } from '../db/db.service';
+import { posts, profiles, likes, follows } from '../db/schema';
+import { eq, and, inArray, desc, sql } from 'drizzle-orm';
 import { CreatePostDto } from './dto/create-post.dto';
 
 @Injectable()
 export class PostsService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(private dbService: DbService) {}
 
   // Post oluştur
   async createPost(authorId: string, createPostDto: CreatePostDto) {
-    const supabase = this.supabaseService.getClient();
-
     // Text veya audio en az biri olmalı
     if (!createPostDto.text && !createPostDto.audio_url) {
       throw new BadRequestException('Post must have either text or audio');
     }
 
-    const { data, error } = await supabase
-      .from('posts')
-      .insert({
-        author_id: authorId,
-        text: createPostDto.text,
-        audio_url: createPostDto.audio_url,
-        visibility: createPostDto.visibility || 'public',
+    const [newPost] = await this.dbService.db
+      .insert(posts)
+      .values({
+        authorId: authorId,
+        text: createPostDto.text || null,
+        audioUrl: createPostDto.audio_url || null,
+        visibility:
+          (createPostDto.visibility as 'public' | 'followers') || 'public',
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
+    if (!newPost) {
       throw new BadRequestException('Failed to create post');
     }
 
-    return this.getPostById(data.id, authorId);
+    return this.getPostById(newPost.id, authorId);
   }
 
   // Tek post getir
   async getPostById(postId: string, currentUserId?: string) {
-    const supabase = this.supabaseService.getClient();
+    const [post] = await this.dbService.db
+      .select({
+        id: posts.id,
+        authorId: posts.authorId,
+        text: posts.text,
+        audioUrl: posts.audioUrl,
+        visibility: posts.visibility,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+        author: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+        },
+      })
+      .from(posts)
+      .innerJoin(profiles, eq(posts.authorId, profiles.id))
+      .where(eq(posts.id, postId))
+      .limit(1);
 
-    const { data: post, error } = await supabase
-      .from('posts')
-      .select(`
-        *,
-        profiles:author_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq('id', postId)
-      .single();
-
-    if (error || !post) {
+    if (!post) {
       throw new NotFoundException('Post not found');
     }
 
     // Like sayısı
-    const { count: likesCount } = await supabase
-      .from('likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('post_id', postId);
+    const [likesResult] = await this.dbService.db
+      .select({ count: sql<number>`count(*)` })
+      .from(likes)
+      .where(eq(likes.postId, postId));
+
+    const likesCount = Number(likesResult?.count || 0);
 
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (currentUserId) {
-      const { data: like } = await supabase
-        .from('likes')
-        .select('*')
-        .eq('post_id', postId)
-        .eq('user_id', currentUserId)
-        .single();
-      
+      const [like] = await this.dbService.db
+        .select()
+        .from(likes)
+        .where(and(eq(likes.postId, postId), eq(likes.userId, currentUserId)))
+        .limit(1);
+
       isLiked = !!like;
     }
 
     return {
-      ...post,
-      author: post.profiles,
-      likes_count: likesCount || 0,
+      id: post.id,
+      author_id: post.authorId,
+      text: post.text || '',
+      audio_url: post.audioUrl || '',
+      visibility: post.visibility,
+      created_at: post.createdAt.toISOString(),
+      author: {
+        id: post.author.id,
+        username: post.author.username,
+        display_name: post.author.displayName || '',
+        avatar_url: post.author.avatarUrl || '',
+      },
+      likes_count: likesCount,
       is_liked: isLiked,
     };
   }
 
   // Following feed (takip ettiklerimin postları)
   async getFollowingFeed(userId: string, limit = 20, offset = 0) {
-    const supabase = this.supabaseService.getClient();
-
     // Takip ettiğim kullanıcıları al
-    const { data: following } = await supabase
-      .from('follows')
-      .select('following_id')
-      .eq('follower_id', userId);
+    const following = await this.dbService.db
+      .select({ followingId: follows.followingId })
+      .from(follows)
+      .where(eq(follows.followerId, userId));
 
-    const followingIds = following?.map(f => f.following_id) || [];
+    const followingIds = following.map((f) => f.followingId);
 
     // Eğer kimseyi takip etmiyorsa boş array döndür
     if (followingIds.length === 0) {
@@ -100,187 +119,187 @@ export class PostsService {
     }
 
     // Takip ettiklerimin postlarını getir
-    const { data: posts, error } = await supabase
-      .from('posts')
-      .select(`
-        *,
-        profiles:author_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `)
-      .in('author_id', followingIds)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch feed');
-    }
+    const postsList = await this.dbService.db
+      .select({
+        id: posts.id,
+        authorId: posts.authorId,
+        text: posts.text,
+        audioUrl: posts.audioUrl,
+        visibility: posts.visibility,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+        author: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+        },
+      })
+      .from(posts)
+      .innerJoin(profiles, eq(posts.authorId, profiles.id))
+      .where(inArray(posts.authorId, followingIds))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit)
+      .offset(offset);
 
     // Her post için like bilgilerini ekle
-    return Promise.all(posts.map(post => this.enrichPost(post, userId)));
+    return Promise.all(
+      postsList.map((post) => this.enrichPostDrizzle(post, userId))
+    );
   }
 
   // For You feed (public postlar)
   async getDiscoverFeed(userId: string, limit = 20, offset = 0) {
-    const supabase = this.supabaseService.getClient();
+    const postsList = await this.dbService.db
+      .select({
+        id: posts.id,
+        authorId: posts.authorId,
+        text: posts.text,
+        audioUrl: posts.audioUrl,
+        visibility: posts.visibility,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+        author: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+        },
+      })
+      .from(posts)
+      .innerJoin(profiles, eq(posts.authorId, profiles.id))
+      .where(eq(posts.visibility, 'public'))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit)
+      .offset(offset);
 
-    const { data: posts, error } = await supabase
-      .from('posts')
-      .select(`
-        *,
-        profiles:author_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq('visibility', 'public')
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch discover feed');
-    }
-
-    return Promise.all(posts.map(post => this.enrichPost(post, userId)));
+    return Promise.all(
+      postsList.map((post) => this.enrichPostDrizzle(post, userId))
+    );
   }
 
   // Post sil
   async deletePost(postId: string, userId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Post'un sahibi mi kontrol et
-    const { data: post } = await supabase
-      .from('posts')
-      .select('author_id')
-      .eq('id', postId)
-      .single();
+    const [post] = await this.dbService.db
+      .select({ authorId: posts.authorId })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
 
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.author_id !== userId) {
+    if (post.authorId !== userId) {
       throw new ForbiddenException('You can only delete your own posts');
     }
 
-    const { error } = await supabase
-      .from('posts')
-      .delete()
-      .eq('id', postId);
-
-    if (error) {
-      throw new BadRequestException('Failed to delete post');
-    }
+    await this.dbService.db.delete(posts).where(eq(posts.id, postId));
 
     return { message: 'Post deleted successfully' };
   }
 
   // Like / Unlike
   async toggleLike(postId: string, userId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Post var mı kontrol et
-    const { data: post } = await supabase
-      .from('posts')
-      .select('id')
-      .eq('id', postId)
-      .single();
+    const [post] = await this.dbService.db
+      .select({ id: posts.id })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
 
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
     // Zaten beğenmiş mi?
-    const { data: existingLike } = await supabase
-      .from('likes')
-      .select('*')
-      .eq('post_id', postId)
-      .eq('user_id', userId)
-      .single();
+    const [existingLike] = await this.dbService.db
+      .select()
+      .from(likes)
+      .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
+      .limit(1);
 
     if (existingLike) {
       // Unlike
-      await supabase
-        .from('likes')
-        .delete()
-        .eq('post_id', postId)
-        .eq('user_id', userId);
+      await this.dbService.db
+        .delete(likes)
+        .where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
 
       return { liked: false, message: 'Post unliked' };
     } else {
       // Like
-      await supabase
-        .from('likes')
-        .insert({
-          post_id: postId,
-          user_id: userId,
-        });
+      await this.dbService.db.insert(likes).values({
+        postId: postId,
+        userId: userId,
+      });
 
       return { liked: true, message: 'Post liked' };
     }
   }
 
-  // Post'u like bilgileriyle zenginleştir (helper)
-  private async enrichPost(post: any, userId?: string) {
-    const supabase = this.supabaseService.getClient();
-
+  // Post'u like bilgileriyle zenginleştir (helper) - Drizzle version
+  private async enrichPostDrizzle(post: any, userId?: string) {
     // Like sayısı
-    const { count: likesCount } = await supabase
-      .from('likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('post_id', post.id);
+    const [likesResult] = await this.dbService.db
+      .select({ count: sql<number>`count(*)` })
+      .from(likes)
+      .where(eq(likes.postId, post.id));
+
+    const likesCount = Number(likesResult?.count || 0);
 
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (userId) {
-      const { data: like } = await supabase
-        .from('likes')
-        .select('*')
-        .eq('post_id', post.id)
-        .eq('user_id', userId)
-        .single();
-      
+      const [like] = await this.dbService.db
+        .select()
+        .from(likes)
+        .where(and(eq(likes.postId, post.id), eq(likes.userId, userId)))
+        .limit(1);
+
       isLiked = !!like;
     }
 
     return {
-      ...post,
-      author: post.profiles,
-      likes_count: likesCount || 0,
+      id: post.id,
+      author_id: post.authorId,
+      text: post.text || '',
+      audio_url: post.audioUrl || '',
+      visibility: post.visibility,
+      created_at: post.createdAt.toISOString(),
+      author: {
+        id: post.author.id,
+        username: post.author.username,
+        display_name: post.author.displayName || '',
+        avatar_url: post.author.avatarUrl || '',
+      },
+      likes_count: likesCount,
       is_liked: isLiked,
     };
   }
 
   // Gönderiyi beğenenler listesi
   async getPostLikes(postId: string) {
-    const supabase = this.supabaseService.getClient();
+    const likesList = await this.dbService.db
+      .select({
+        userId: likes.userId,
+        createdAt: likes.createdAt,
+        profile: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+        },
+      })
+      .from(likes)
+      .innerJoin(profiles, eq(likes.userId, profiles.id))
+      .where(eq(likes.postId, postId));
 
-    const { data, error } = await supabase
-      .from('likes')
-      .select(`
-        user_id,
-        created_at,
-        profiles:user_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq('post_id', postId);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch likes');
-    }
-
-    return data.map(like => ({
-      ...like.profiles,
-      liked_at: like.created_at,
+    return likesList.map((like) => ({
+      ...like.profile,
+      display_name: like.profile.displayName,
+      avatar_url: like.profile.avatarUrl,
+      liked_at: like.createdAt,
     }));
   }
 }

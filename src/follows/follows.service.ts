@@ -1,61 +1,68 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+import { DbService } from '../db/db.service';
+import { follows, profiles } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 
 @Injectable()
 export class FollowsService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(private dbService: DbService) {}
 
   // Kullanıcıyı takip et
   async followUser(followerId: string, followingId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Kendini takip edemez
     if (followerId === followingId) {
       throw new BadRequestException('You cannot follow yourself');
     }
 
     // Zaten takip ediyor mu kontrol et
-    const { data: existingFollow } = await supabase
-      .from('follows')
-      .select('*')
-      .eq('follower_id', followerId)
-      .eq('following_id', followingId)
-      .single();
+    const [existingFollow] = await this.dbService.db
+      .select()
+      .from(follows)
+      .where(
+        and(
+          eq(follows.followerId, followerId),
+          eq(follows.followingId, followingId)
+        )
+      )
+      .limit(1);
 
     if (existingFollow) {
       throw new BadRequestException('Already following this user');
     }
 
     // Takip et
-    const { data, error } = await supabase
-      .from('follows')
-      .insert({
-        follower_id: followerId,
-        following_id: followingId,
+    const [newFollow] = await this.dbService.db
+      .insert(follows)
+      .values({
+        followerId: followerId,
+        followingId: followingId,
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
+    if (!newFollow) {
       throw new BadRequestException('Failed to follow user');
     }
 
-    return data;
+    return newFollow;
   }
 
   // Takibi bırak
   async unfollowUser(followerId: string, followingId: string) {
-    const supabase = this.supabaseService.getClient();
+    const [deleted] = await this.dbService.db
+      .delete(follows)
+      .where(
+        and(
+          eq(follows.followerId, followerId),
+          eq(follows.followingId, followingId)
+        )
+      )
+      .returning();
 
-    const { data, error } = await supabase
-      .from('follows')
-      .delete()
-      .eq('follower_id', followerId)
-      .eq('following_id', followingId)
-      .select()
-      .single();
-
-    if (error || !data) {
+    if (!deleted) {
       throw new NotFoundException('Follow relationship not found');
     }
 
@@ -64,59 +71,53 @@ export class FollowsService {
 
   // Takip ettiklerim (ben kimi takip ediyorum)
   async getFollowing(userId: string) {
-    const supabase = this.supabaseService.getClient();
+    const followingList = await this.dbService.db
+      .select({
+        followingId: follows.followingId,
+        createdAt: follows.createdAt,
+        profile: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+          bio: profiles.bio,
+        },
+      })
+      .from(follows)
+      .innerJoin(profiles, eq(follows.followingId, profiles.id))
+      .where(eq(follows.followerId, userId));
 
-    const { data, error } = await supabase
-      .from('follows')
-      .select(`
-        following_id,
-        created_at,
-        profiles:following_id (
-          id,
-          username,
-          display_name,
-          avatar_url,
-          bio
-        )
-      `)
-      .eq('follower_id', userId);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch following list');
-    }
-
-    return data.map((follow) => ({
-      ...follow.profiles,
-      followed_at: follow.created_at,
+    return followingList.map((follow) => ({
+      ...follow.profile,
+      display_name: follow.profile.displayName,
+      avatar_url: follow.profile.avatarUrl,
+      followed_at: follow.createdAt,
     }));
   }
 
   // Takipçilerim (beni kim takip ediyor)
   async getFollowers(userId: string) {
-    const supabase = this.supabaseService.getClient();
+    const followersList = await this.dbService.db
+      .select({
+        followerId: follows.followerId,
+        createdAt: follows.createdAt,
+        profile: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+          bio: profiles.bio,
+        },
+      })
+      .from(follows)
+      .innerJoin(profiles, eq(follows.followerId, profiles.id))
+      .where(eq(follows.followingId, userId));
 
-    const { data, error } = await supabase
-      .from('follows')
-      .select(`
-        follower_id,
-        created_at,
-        profiles:follower_id (
-          id,
-          username,
-          display_name,
-          avatar_url,
-          bio
-        )
-      `)
-      .eq('following_id', userId);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch followers list');
-    }
-
-    return data.map((follow) => ({
-      ...follow.profiles,
-      followed_at: follow.created_at,
+    return followersList.map((follow) => ({
+      ...follow.profile,
+      display_name: follow.profile.displayName,
+      avatar_url: follow.profile.avatarUrl,
+      followed_at: follow.createdAt,
     }));
   }
 
@@ -132,15 +133,17 @@ export class FollowsService {
 
   // İki kullanıcı arasında takip ilişkisi var mı (helper)
   async isFollowing(followerId: string, followingId: string): Promise<boolean> {
-    const supabase = this.supabaseService.getClient();
+    const [follow] = await this.dbService.db
+      .select()
+      .from(follows)
+      .where(
+        and(
+          eq(follows.followerId, followerId),
+          eq(follows.followingId, followingId)
+        )
+      )
+      .limit(1);
 
-    const { data } = await supabase
-      .from('follows')
-      .select('*')
-      .eq('follower_id', followerId)
-      .eq('following_id', followingId)
-      .single();
-
-    return !!data;
+    return !!follow;
   }
 }

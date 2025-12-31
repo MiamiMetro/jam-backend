@@ -1,61 +1,62 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+import { DbService } from '../db/db.service';
+import { blocks, profiles } from '../db/schema';
+import { eq, and, or } from 'drizzle-orm';
 
 @Injectable()
 export class BlocksService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(private dbService: DbService) {}
 
   // Kullanıcıyı engelle
   async blockUser(blockerId: string, blockedId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Kendini engelleyemez
     if (blockerId === blockedId) {
       throw new BadRequestException('You cannot block yourself');
     }
 
     // Zaten engellenmiş mi kontrol et
-    const { data: existingBlock } = await supabase
-      .from('blocks')
-      .select('*')
-      .eq('blocker_id', blockerId)
-      .eq('blocked_id', blockedId)
-      .single();
+    const [existingBlock] = await this.dbService.db
+      .select()
+      .from(blocks)
+      .where(
+        and(eq(blocks.blockerId, blockerId), eq(blocks.blockedId, blockedId))
+      )
+      .limit(1);
 
     if (existingBlock) {
       throw new BadRequestException('User already blocked');
     }
 
     // Engelle
-    const { data, error } = await supabase
-      .from('blocks')
-      .insert({
-        blocker_id: blockerId,
-        blocked_id: blockedId,
+    const [newBlock] = await this.dbService.db
+      .insert(blocks)
+      .values({
+        blockerId: blockerId,
+        blockedId: blockedId,
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
+    if (!newBlock) {
       throw new BadRequestException('Failed to block user');
     }
 
-    return data;
+    return newBlock;
   }
 
   // Engeli kaldır
   async unblockUser(blockerId: string, blockedId: string) {
-    const supabase = this.supabaseService.getClient();
+    const [deleted] = await this.dbService.db
+      .delete(blocks)
+      .where(
+        and(eq(blocks.blockerId, blockerId), eq(blocks.blockedId, blockedId))
+      )
+      .returning();
 
-    const { data, error } = await supabase
-      .from('blocks')
-      .delete()
-      .eq('blocker_id', blockerId)
-      .eq('blocked_id', blockedId)
-      .select()
-      .single();
-
-    if (error || !data) {
+    if (!deleted) {
       throw new NotFoundException('Block not found');
     }
 
@@ -64,43 +65,43 @@ export class BlocksService {
 
   // Engellediklerim listesi
   async getBlockedUsers(blockerId: string) {
-    const supabase = this.supabaseService.getClient();
-
-    const { data, error } = await supabase
-      .from('blocks')
-      .select(`
-        blocked_id,
-        created_at,
-        profiles:blocked_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq('blocker_id', blockerId);
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch blocked users');
-    }
+    const blockedList = await this.dbService.db
+      .select({
+        blockedId: blocks.blockedId,
+        createdAt: blocks.createdAt,
+        profile: {
+          id: profiles.id,
+          username: profiles.username,
+          displayName: profiles.displayName,
+          avatarUrl: profiles.avatarUrl,
+        },
+      })
+      .from(blocks)
+      .innerJoin(profiles, eq(blocks.blockedId, profiles.id))
+      .where(eq(blocks.blockerId, blockerId));
 
     // Profil bilgilerini düzenle
-    return data.map((block) => ({
-      ...block.profiles,
-      blocked_at: block.created_at,
+    return blockedList.map((block) => ({
+      ...block.profile,
+      display_name: block.profile.displayName,
+      avatar_url: block.profile.avatarUrl,
+      blocked_at: block.createdAt,
     }));
   }
 
   // İki kullanıcı arasında engel var mı kontrol et (helper fonksiyon)
   async isBlocked(userId1: string, userId2: string): Promise<boolean> {
-    const supabase = this.supabaseService.getClient();
+    const [block] = await this.dbService.db
+      .select()
+      .from(blocks)
+      .where(
+        or(
+          and(eq(blocks.blockerId, userId1), eq(blocks.blockedId, userId2)),
+          and(eq(blocks.blockerId, userId2), eq(blocks.blockedId, userId1))
+        )
+      )
+      .limit(1);
 
-    const { data } = await supabase
-      .from('blocks')
-      .select('*')
-      .or(`and(blocker_id.eq.${userId1},blocked_id.eq.${userId2}),and(blocker_id.eq.${userId2},blocked_id.eq.${userId1})`)
-      .single();
-
-    return !!data;
+    return !!block;
   }
 }

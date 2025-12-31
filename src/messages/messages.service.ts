@@ -1,15 +1,20 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { DbService } from '../db/db.service';
+import { messages, conversations, profiles, blocks } from '../db/schema';
+import { eq, and, or, desc } from 'drizzle-orm';
 import { SendMessageDto } from './dto/send-message.dto';
 
 @Injectable()
 export class MessagesService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(private dbService: DbService) {}
 
   // Mesaj gönder
   async sendMessage(senderId: string, sendMessageDto: SendMessageDto) {
-    const supabase = this.supabaseService.getClient();
-
     const { recipient_id, text, audio_url } = sendMessageDto;
 
     // Kendine mesaj gönderemez
@@ -23,68 +28,82 @@ export class MessagesService {
     }
 
     // Block kontrolü (engelleme varsa mesaj gönderemez)
-    const { data: blockCheck } = await supabase
-      .from('blocks')
-      .select('*')
-      .or(`and(blocker_id.eq.${senderId},blocked_id.eq.${recipient_id}),and(blocker_id.eq.${recipient_id},blocked_id.eq.${senderId})`)
-      .single();
+    const [blockCheck] = await this.dbService.db
+      .select()
+      .from(blocks)
+      .where(
+        or(
+          and(
+            eq(blocks.blockerId, senderId),
+            eq(blocks.blockedId, recipient_id)
+          ),
+          and(
+            eq(blocks.blockerId, recipient_id),
+            eq(blocks.blockedId, senderId)
+          )
+        )
+      )
+      .limit(1);
 
     if (blockCheck) {
       throw new ForbiddenException('Cannot send message to this user');
     }
 
     // Conversation bul veya oluştur
-    const conversationId = await this.findOrCreateConversation(senderId, recipient_id);
+    const conversationId = await this.findOrCreateConversation(
+      senderId,
+      recipient_id
+    );
 
     // Mesajı kaydet
-    const { data: message, error } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        sender_id: senderId,
-        text: text,
-        audio_url: audio_url,
+    const [newMessage] = await this.dbService.db
+      .insert(messages)
+      .values({
+        conversationId: conversationId,
+        senderId: senderId,
+        text: text || null,
+        audioUrl: audio_url || null,
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
+    if (!newMessage) {
       throw new BadRequestException('Failed to send message');
     }
 
-    return message;
+    return newMessage;
   }
 
   // Conversation bul veya oluştur (helper)
-  private async findOrCreateConversation(user1: string, user2: string): Promise<string> {
-    const supabase = this.supabaseService.getClient();
-
+  private async findOrCreateConversation(
+    user1: string,
+    user2: string
+  ): Promise<string> {
     // user_1 her zaman küçük ID olmalı (database constraint)
     const [smaller, larger] = [user1, user2].sort();
 
     // Mevcut conversation'ı bul
-    const { data: existing } = await supabase
-      .from('conversations')
-      .select('id')
-      .eq('user_1', smaller)
-      .eq('user_2', larger)
-      .single();
+    const [existing] = await this.dbService.db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(eq(conversations.user1, smaller), eq(conversations.user2, larger))
+      )
+      .limit(1);
 
     if (existing) {
       return existing.id;
     }
 
     // Yoksa oluştur
-    const { data: newConv, error } = await supabase
-      .from('conversations')
-      .insert({
-        user_1: smaller,
-        user_2: larger,
+    const [newConv] = await this.dbService.db
+      .insert(conversations)
+      .values({
+        user1: smaller,
+        user2: larger,
       })
-      .select('id')
-      .single();
+      .returning({ id: conversations.id });
 
-    if (error) {
+    if (!newConv) {
       throw new BadRequestException('Failed to create conversation');
     }
 
@@ -93,68 +112,87 @@ export class MessagesService {
 
   // Konuşmalarım listesi
   async getMyConversations(userId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Benim olduğum tüm conversation'ları al
-    const { data: conversations, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .or(`user_1.eq.${userId},user_2.eq.${userId}`)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new BadRequestException('Failed to fetch conversations');
-    }
+    const conversationsList = await this.dbService.db
+      .select()
+      .from(conversations)
+      .where(
+        or(eq(conversations.user1, userId), eq(conversations.user2, userId))
+      )
+      .orderBy(desc(conversations.createdAt));
 
     // Her conversation için diğer kullanıcı ve son mesaj bilgilerini al
     const enrichedConversations = await Promise.all(
-      conversations.map(async (conv) => {
-        const otherUserId = conv.user_1 === userId ? conv.user_2 : conv.user_1;
+      conversationsList.map(async (conv) => {
+        const otherUserId = conv.user1 === userId ? conv.user2 : conv.user1;
 
         // Diğer kullanıcının profilini al
-        const { data: otherUser } = await supabase
-          .from('profiles')
-          .select('id, username, display_name, avatar_url')
-          .eq('id', otherUserId)
-          .single();
+        const [otherUser] = await this.dbService.db
+          .select({
+            id: profiles.id,
+            username: profiles.username,
+            displayName: profiles.displayName,
+            avatarUrl: profiles.avatarUrl,
+          })
+          .from(profiles)
+          .where(eq(profiles.id, otherUserId))
+          .limit(1);
 
         // Son mesajı al
-        const { data: lastMessage } = await supabase
-          .from('messages')
-          .select('*')
-          .eq('conversation_id', conv.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+        const [lastMessage] = await this.dbService.db
+          .select()
+          .from(messages)
+          .where(eq(messages.conversationId, conv.id))
+          .orderBy(desc(messages.createdAt))
+          .limit(1);
 
         return {
           id: conv.id,
-          other_user: otherUser,
-          last_message: lastMessage,
-          updated_at: lastMessage?.created_at || conv.created_at,
+          other_user: otherUser
+            ? {
+                ...otherUser,
+                display_name: otherUser.displayName,
+                avatar_url: otherUser.avatarUrl,
+              }
+            : null,
+          last_message: lastMessage
+            ? {
+                ...lastMessage,
+                conversation_id: lastMessage.conversationId,
+                sender_id: lastMessage.senderId,
+                audio_url: lastMessage.audioUrl,
+                created_at: lastMessage.createdAt,
+              }
+            : null,
+          updated_at: lastMessage?.createdAt || conv.createdAt,
         };
       })
     );
 
     // Son mesaja göre sırala
-    return enrichedConversations.sort((a, b) => 
-      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    return enrichedConversations.sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     );
   }
 
   // Belirli bir kullanıcıyla mesajlar
-  async getMessagesWithUser(userId: string, otherUserId: string, limit = 50, offset = 0) {
-    const supabase = this.supabaseService.getClient();
-
+  async getMessagesWithUser(
+    userId: string,
+    otherUserId: string,
+    limit = 50,
+    offset = 0
+  ) {
     // Conversation'ı bul
     const [smaller, larger] = [userId, otherUserId].sort();
 
-    const { data: conversation } = await supabase
-      .from('conversations')
-      .select('id')
-      .eq('user_1', smaller)
-      .eq('user_2', larger)
-      .single();
+    const [conversation] = await this.dbService.db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        and(eq(conversations.user1, smaller), eq(conversations.user2, larger))
+      )
+      .limit(1);
 
     if (!conversation) {
       // Henüz conversation yok, boş array döndür
@@ -162,47 +200,42 @@ export class MessagesService {
     }
 
     // Mesajları getir
-    const { data: messages, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const messagesList = await this.dbService.db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversationId, conversation.id))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit)
+      .offset(offset);
 
-    if (error) {
-      throw new BadRequestException('Failed to fetch messages');
-    }
-
-    return messages.reverse(); // Eski mesajlar önce
+    // Eski mesajlar önce (reverse)
+    return messagesList.reverse().map((msg) => ({
+      ...msg,
+      conversation_id: msg.conversationId,
+      sender_id: msg.senderId,
+      audio_url: msg.audioUrl,
+      created_at: msg.createdAt,
+    }));
   }
 
   // Mesaj sil (sadece kendi mesajını)
   async deleteMessage(messageId: string, userId: string) {
-    const supabase = this.supabaseService.getClient();
-
     // Mesajın sahibi mi kontrol et
-    const { data: message } = await supabase
-      .from('messages')
-      .select('sender_id')
-      .eq('id', messageId)
-      .single();
+    const [message] = await this.dbService.db
+      .select({ senderId: messages.senderId })
+      .from(messages)
+      .where(eq(messages.id, messageId))
+      .limit(1);
 
     if (!message) {
       throw new NotFoundException('Message not found');
     }
 
-    if (message.sender_id !== userId) {
+    if (message.senderId !== userId) {
       throw new ForbiddenException('You can only delete your own messages');
     }
 
-    const { error } = await supabase
-      .from('messages')
-      .delete()
-      .eq('id', messageId);
-
-    if (error) {
-      throw new BadRequestException('Failed to delete message');
-    }
+    await this.dbService.db.delete(messages).where(eq(messages.id, messageId));
 
     return { message: 'Message deleted successfully' };
   }

@@ -1,5 +1,10 @@
 import { Controller, Get, Patch, Body, Param, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiTags,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ProfilesService } from './profiles.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -25,7 +30,7 @@ export class ProfilesController {
   @ApiOperation({ summary: 'Update my profile' })
   async updateMyProfile(
     @CurrentUser() user: any,
-    @Body() updateDto: UpdateProfileDto,
+    @Body() updateDto: UpdateProfileDto
   ): Promise<ProfileResponseDto> {
     return this.profilesService.updateProfile(user.id, updateDto);
   }
@@ -34,7 +39,7 @@ export class ProfilesController {
   @ApiOperation({ summary: 'Get profile by username (public)' })
   @ApiParam({ name: 'username', example: 'johndoe' })
   async getProfileByUsername(
-    @Param('username') username: string,
+    @Param('username') username: string
   ): Promise<ProfileResponseDto> {
     return this.profilesService.getProfileByUsername(username);
   }

@@ -1,17 +1,23 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Delete, 
-  Body, 
-  Param, 
-  Query, 
-  UseGuards, 
+import {
+  Controller,
+  Post,
+  Get,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
   ParseUUIDPipe,
   ParseIntPipe,
-  DefaultValuePipe
+  DefaultValuePipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiTags,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { PostsService } from './posts.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -29,7 +35,7 @@ export class PostsController {
   @ApiOperation({ summary: 'Create a new post' })
   async createPost(
     @CurrentUser() user: any,
-    @Body() createPostDto: CreatePostDto,
+    @Body() createPostDto: CreatePostDto
   ): Promise<PostResponseDto> {
     return this.postsService.createPost(user.id, createPostDto);
   }
@@ -43,7 +49,7 @@ export class PostsController {
   async getFollowingFeed(
     @CurrentUser() user: any,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
   ) {
     return this.postsService.getFollowingFeed(user.id, limit, offset);
   }
@@ -57,7 +63,7 @@ export class PostsController {
   async getDiscoverFeed(
     @CurrentUser() user: any,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
   ) {
     return this.postsService.getDiscoverFeed(user.id, limit, offset);
   }
@@ -69,7 +75,7 @@ export class PostsController {
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async getPost(
     @CurrentUser() user: any,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
   ): Promise<PostResponseDto> {
     return this.postsService.getPostById(postId, user.id);
   }
@@ -81,7 +87,7 @@ export class PostsController {
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async deletePost(
     @CurrentUser() user: any,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     return this.postsService.deletePost(postId, user.id);
   }
@@ -93,7 +99,7 @@ export class PostsController {
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async toggleLike(
     @CurrentUser() user: any,
-    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('postId', ParseUUIDPipe) postId: string
   ) {
     return this.postsService.toggleLike(postId, user.id);
   }

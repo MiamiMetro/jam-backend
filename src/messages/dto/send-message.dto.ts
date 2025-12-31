@@ -2,27 +2,27 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class SendMessageDto {
-  @ApiProperty({ 
+  @ApiProperty({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    description: 'ID of user to send message to'
+    description: 'ID of user to send message to',
   })
   @IsNotEmpty()
   @IsUUID()
   recipient_id: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: 'Hey! How are you?',
     description: 'Message text',
-    required: false
+    required: false,
   })
   @IsOptional()
   @IsString()
   text?: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: 'https://storage.supabase.co/audio/voice.mp3',
     description: 'Audio message URL',
-    required: false
+    required: false,
   })
   @IsOptional()
   @IsString()

@@ -34,14 +34,4 @@ export class RegisterDto {
   @MinLength(3)
   @MaxLength(20)
   username: string;
-
-  @ApiProperty({
-    example: 'New User',
-    description: 'Display name',
-    required: false,
-  })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(50)
-  display_name?: string;
 }

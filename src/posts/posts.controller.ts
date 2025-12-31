@@ -23,6 +23,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreatePostDto } from './dto/create-post.dto';
 import { PostResponseDto } from './dto/post-response.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { CommentResponseDto } from './dto/comment-response.dto';
 
 @ApiTags('Posts')
 @Controller('posts')
@@ -41,43 +43,25 @@ export class PostsController {
   }
 
   @Get('feed')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get following feed (posts from users I follow)' })
+  @ApiOperation({ summary: 'Get global feed (all posts)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
-  async getFollowingFeed(
+  async getFeed(
     @CurrentUser() user: any,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
   ) {
-    return this.postsService.getFollowingFeed(user.id, limit, offset);
-  }
-
-  @Get('discover')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get discover feed (public posts, For You)' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
-  async getDiscoverFeed(
-    @CurrentUser() user: any,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
-  ) {
-    return this.postsService.getDiscoverFeed(user.id, limit, offset);
+    return this.postsService.getFeed(user?.id, limit, offset);
   }
 
   @Get(':postId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get a single post by ID' })
+  @ApiOperation({ summary: 'Get a single post by ID (public)' })
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async getPost(
     @CurrentUser() user: any,
     @Param('postId', ParseUUIDPipe) postId: string
   ): Promise<PostResponseDto> {
-    return this.postsService.getPostById(postId, user.id);
+    return this.postsService.getPostById(postId, user?.id);
   }
 
   @Delete(':postId')
@@ -109,5 +93,39 @@ export class PostsController {
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async getPostLikes(@Param('postId', ParseUUIDPipe) postId: string) {
     return this.postsService.getPostLikes(postId);
+  }
+
+  @Get(':postId/comments')
+  @ApiOperation({ summary: 'Get all comments for a post' })
+  @ApiParam({ name: 'postId', description: 'Post ID' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  @ApiQuery({
+    name: 'order',
+    required: false,
+    enum: ['asc', 'desc'],
+    example: 'asc',
+    description: 'Order by timestamp (asc = oldest first, desc = newest first)',
+  })
+  async getComments(
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('order') order?: 'asc' | 'desc'
+  ) {
+    return this.postsService.getComments(postId, limit, offset, order || 'asc');
+  }
+
+  @Post(':postId/comments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create a comment on a post' })
+  @ApiParam({ name: 'postId', description: 'Post ID' })
+  async createComment(
+    @CurrentUser() user: any,
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Body() createCommentDto: CreateCommentDto
+  ): Promise<CommentResponseDto> {
+    return this.postsService.createComment(postId, user.id, createCommentDto);
   }
 }

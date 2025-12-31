@@ -6,6 +6,14 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // CORS configuration
+  app.enableCors({
+    origin: 'http://localhost:5123',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
   // Validation (DTO'lar için)
   app.useGlobalPipes(
     new ValidationPipe({
@@ -18,13 +26,15 @@ async function bootstrap() {
   // Swagger setup
   const config = new DocumentBuilder()
     .setTitle('Jam Backend API')
-    .setDescription('Voice Social Platform API Documentation')
+    .setDescription('Jam Backend API Documentation')
     .setVersion('1.0')
     .addBearerAuth() // JWT token için
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup('api', app, document, {
+    jsonDocumentUrl: 'openapi.json',
+  });
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

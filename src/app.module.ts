@@ -7,10 +7,11 @@ import { DbModule } from './db/db.module';
 import { AuthModule } from './auth/auth.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { BlocksModule } from './blocks/blocks.module';
-import { FollowsModule } from './follows/follows.module';
+import { FriendsModule } from './friends/friends.module';
 import { PostsModule } from './posts/posts.module';
 import { MessagesModule } from './messages/messages.module';
 import { RoomsModule } from './rooms/rooms.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -22,10 +23,11 @@ import { RoomsModule } from './rooms/rooms.module';
     AuthModule,
     ProfilesModule,
     BlocksModule,
-    FollowsModule,
+    FriendsModule,
     PostsModule,
     MessagesModule,
     RoomsModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

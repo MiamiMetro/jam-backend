@@ -4,14 +4,18 @@ import {
   Delete,
   Get,
   Param,
+  Query,
   UseGuards,
   ParseUUIDPipe,
+  ParseIntPipe,
+  DefaultValuePipe,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiTags,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { BlocksService } from './blocks.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -46,7 +50,13 @@ export class BlocksController {
 
   @Get()
   @ApiOperation({ summary: 'Get list of blocked users' })
-  async getBlockedUsers(@CurrentUser() user: any) {
-    return this.blocksService.getBlockedUsers(user.id);
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 50 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  async getBlockedUsers(
+    @CurrentUser() user: any,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+  ) {
+    return this.blocksService.getBlockedUsers(user.id, limit, offset);
   }
 }

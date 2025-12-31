@@ -1,9 +1,20 @@
-import { Controller, Get, Patch, Body, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  ParseIntPipe,
+  DefaultValuePipe,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiTags,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { ProfilesService } from './profiles.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -42,5 +53,24 @@ export class ProfilesController {
     @Param('username') username: string
   ): Promise<ProfileResponseDto> {
     return this.profilesService.getProfileByUsername(username);
+  }
+
+  @Get(':username/posts')
+  @ApiOperation({ summary: 'Get posts by a specific user' })
+  @ApiParam({ name: 'username', example: 'johndoe' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  async getPostsByUsername(
+    @CurrentUser() user: any,
+    @Param('username') username: string,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+  ) {
+    return this.profilesService.getPostsByUsername(
+      username,
+      user?.id,
+      limit,
+      offset
+    );
   }
 }

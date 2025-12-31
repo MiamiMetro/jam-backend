@@ -1,21 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 
-export class CreatePostDto {
+export class CreateCommentDto {
   @ApiProperty({
-    example: 'Just finished my new track! 🎵',
-    description: 'Post text content',
+    example: 'Great track!',
+    description: 'Comment text content',
     required: false,
     maxLength: 500,
   })
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  text?: string;
+  content?: string;
 
   @ApiProperty({
-    example: 'https://storage.supabase.co/audio/track.mp3',
-    description: 'Audio file URL',
+    example: 'https://storage.supabase.co/audio/comment.mp3',
+    description: 'Audio file URL (optional, can be null for now)',
     required: false,
   })
   @IsOptional()

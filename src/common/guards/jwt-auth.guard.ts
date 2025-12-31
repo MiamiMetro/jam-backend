@@ -23,11 +23,18 @@ export class JwtAuthGuard implements CanActivate {
     try {
       const supabase = this.supabaseService.getClient();
 
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Token verification timeout')), 5000)
+      );
+
       // Supabase'in kendi metoduyla token'ı doğrula
+      const verificationPromise = supabase.auth.getUser(token);
+
       const {
         data: { user },
         error,
-      } = await supabase.auth.getUser(token);
+      } = await Promise.race([verificationPromise, timeoutPromise]) as any;
 
       if (error || !user) {
         throw new UnauthorizedException('Invalid token');
@@ -40,8 +47,11 @@ export class JwtAuthGuard implements CanActivate {
       };
 
       return true;
-    } catch (error) {
-      console.error('JWT verification error:', error);
+    } catch (error: any) {
+      console.error('JWT verification error:', error.message || error);
+      if (error.message === 'Token verification timeout') {
+        throw new UnauthorizedException('Token verification timeout');
+      }
       throw new UnauthorizedException('Invalid token');
     }
   }

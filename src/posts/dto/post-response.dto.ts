@@ -27,9 +27,6 @@ export class PostResponseDto {
   @ApiProperty({ example: 'https://storage.supabase.co/audio/track.mp3' })
   audio_url: string;
 
-  @ApiProperty({ example: 'public' })
-  visibility: string;
-
   @ApiProperty({ example: '2024-12-26T18:00:00Z' })
   created_at: string;
 

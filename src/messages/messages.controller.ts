@@ -41,8 +41,14 @@ export class MessagesController {
 
   @Get('conversations')
   @ApiOperation({ summary: 'Get list of my conversations' })
-  async getMyConversations(@CurrentUser() user: any) {
-    return this.messagesService.getMyConversations(user.id);
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 50 })
+  @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
+  async getMyConversations(
+    @CurrentUser() user: any,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+  ) {
+    return this.messagesService.getMyConversations(user.id, limit, offset);
   }
 
   @Get('conversation/:userId')

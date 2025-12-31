@@ -7,10 +7,14 @@ import { DbService } from '../db/db.service';
 import { profiles } from '../db/schema';
 import { eq, and, ne } from 'drizzle-orm';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PostsService } from '../posts/posts.service';
 
 @Injectable()
 export class ProfilesService {
-  constructor(private dbService: DbService) {}
+  constructor(
+    private dbService: DbService,
+    private postsService: PostsService
+  ) {}
 
   // Kullanıcının kendi profilini getir
   async getMyProfile(userId: string) {
@@ -107,5 +111,20 @@ export class ProfilesService {
       bio: updatedProfile.bio || '',
       created_at: updatedProfile.createdAt.toISOString(),
     };
+  }
+
+  // Get posts by username
+  async getPostsByUsername(
+    username: string,
+    currentUserId: string | undefined,
+    limit = 20,
+    offset = 0
+  ) {
+    return this.postsService.getPostsByUsername(
+      username,
+      currentUserId,
+      limit,
+      offset
+    );
   }
 }

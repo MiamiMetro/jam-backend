@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
 import { blocks, profiles } from '../db/schema';
-import { eq, and, or } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 
 @Injectable()
 export class BlocksService {
@@ -64,7 +64,15 @@ export class BlocksService {
   }
 
   // Engellediklerim listesi
-  async getBlockedUsers(blockerId: string) {
+  async getBlockedUsers(blockerId: string, limit = 50, offset = 0) {
+    // Get total count
+    const [totalResult] = await this.dbService.db
+      .select({ count: sql<number>`count(*)` })
+      .from(blocks)
+      .where(eq(blocks.blockerId, blockerId));
+
+    const total = Number(totalResult?.count || 0);
+
     const blockedList = await this.dbService.db
       .select({
         blockedId: blocks.blockedId,
@@ -78,15 +86,27 @@ export class BlocksService {
       })
       .from(blocks)
       .innerJoin(profiles, eq(blocks.blockedId, profiles.id))
-      .where(eq(blocks.blockerId, blockerId));
+      .where(eq(blocks.blockerId, blockerId))
+      .limit(limit)
+      .offset(offset);
 
     // Profil bilgilerini düzenle
-    return blockedList.map((block) => ({
+    const data = blockedList.map((block) => ({
       ...block.profile,
       display_name: block.profile.displayName,
       avatar_url: block.profile.avatarUrl,
       blocked_at: block.createdAt,
     }));
+
+    const hasMore = offset + limit < total;
+
+    return {
+      data,
+      limit,
+      offset,
+      total,
+      hasMore,
+    };
   }
 
   // İki kullanıcı arasında engel var mı kontrol et (helper fonksiyon)

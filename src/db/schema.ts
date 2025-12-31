@@ -10,7 +10,11 @@ import {
 } from 'drizzle-orm/pg-core';
 
 // Enums
-export const visibilityEnum = pgEnum('visibility', ['public', 'followers']);
+export const friendStatusEnum = pgEnum('friend_status', [
+  'pending',
+  'accepted',
+]);
+export const dmPrivacyEnum = pgEnum('dm_privacy', ['friends', 'everyone']);
 
 // Profiles table
 export const profiles = pgTable('profiles', {
@@ -19,6 +23,7 @@ export const profiles = pgTable('profiles', {
   displayName: varchar('display_name', { length: 50 }),
   avatarUrl: text('avatar_url'),
   bio: text('bio'),
+  dmPrivacy: dmPrivacyEnum('dm_privacy').default('friends').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -33,7 +38,6 @@ export const posts = pgTable(
       .notNull(),
     text: text('text'),
     audioUrl: text('audio_url'),
-    visibility: visibilityEnum('visibility').default('public').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -62,26 +66,25 @@ export const likes = pgTable(
   ]
 );
 
-// Follows table
-export const follows = pgTable(
-  'follows',
+// Friends table
+export const friends = pgTable(
+  'friends',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    followerId: uuid('follower_id')
+    userId: uuid('user_id')
       .references(() => profiles.id, { onDelete: 'cascade' })
       .notNull(),
-    followingId: uuid('following_id')
+    friendId: uuid('friend_id')
       .references(() => profiles.id, { onDelete: 'cascade' })
       .notNull(),
+    status: friendStatusEnum('status').default('pending').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex('follows_follower_following_unique').on(
-      table.followerId,
-      table.followingId
-    ),
-    index('follows_follower_id_idx').on(table.followerId),
-    index('follows_following_id_idx').on(table.followingId),
+    uniqueIndex('friends_user_friend_unique').on(table.userId, table.friendId),
+    index('friends_user_id_idx').on(table.userId),
+    index('friends_friend_id_idx').on(table.friendId),
+    index('friends_status_idx').on(table.status),
   ]
 );
 
@@ -145,5 +148,27 @@ export const messages = pgTable(
   (table) => [
     index('messages_conversation_id_idx').on(table.conversationId),
     index('messages_created_at_idx').on(table.createdAt),
+  ]
+);
+
+// Comments table
+export const comments = pgTable(
+  'comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id')
+      .references(() => posts.id, { onDelete: 'cascade' })
+      .notNull(),
+    authorId: uuid('author_id')
+      .references(() => profiles.id, { onDelete: 'cascade' })
+      .notNull(),
+    text: text('text'),
+    audioUrl: text('audio_url'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('comments_post_id_idx').on(table.postId),
+    index('comments_author_id_idx').on(table.authorId),
+    index('comments_created_at_idx').on(table.createdAt),
   ]
 );

@@ -3,47 +3,23 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SupabaseService } from '../supabase/supabase.service';
-import { DbService } from '../db/db.service';
-import { profiles } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private supabaseService: SupabaseService,
-    private dbService: DbService
-  ) {}
+  constructor(private supabaseService: SupabaseService) {}
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
   async register(@Body() registerDto: RegisterDto) {
     const supabase = this.supabaseService.getClient();
 
-    // 1. Username benzersiz mi kontrol et (ÖNCE KONTROL ET - auth user oluşturmadan önce)
-    const [existingProfile] = await this.dbService.db
-      .select({ username: profiles.username })
-      .from(profiles)
-      .where(eq(profiles.username, registerDto.username))
-      .limit(1);
-
-    if (existingProfile) {
-      return { error: 'Username already taken' };
-    }
-
-    // 2. Email ile kayıtlı kullanıcı var mı kontrol et (optional check)
-    // Note: Supabase signUp will return an error if email exists, so this is just for better UX
-    // We'll let signUp handle duplicate email errors
-
-    // 3. Supabase'de kullanıcı oluştur
+    // 1. Supabase'de kullanıcı oluştur
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: registerDto.email,
       password: registerDto.password,
-      options: {
-        emailRedirectTo: undefined, // Disables email confirmation
-      },
     });
 
     if (authError) {
@@ -54,28 +30,31 @@ export class AuthController {
       return { error: 'Failed to create user' };
     }
 
-    // 4. Profile oluştur
-    try {
-      await this.dbService.db.insert(profiles).values({
-        id: authData.user.id,
-        username: registerDto.username,
-        displayName: registerDto.display_name || registerDto.username,
-        avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${registerDto.username}`,
-      });
-    } catch (profileError: any) {
-      // Profile oluşturulamadı, auth user'ı sil
-      try {
-        await supabase.auth.admin.deleteUser(authData.user.id);
-      } catch (deleteError) {
-        console.error(
-          'Failed to delete auth user after profile creation error:',
-          deleteError
-        );
-      }
+    // 2. Username benzersiz mi kontrol et
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', registerDto.username)
+      .single();
+
+    if (existingProfile) {
+      // Kullanıcı oluşturuldu ama profile oluşturulamadı, geri al
+      return { error: 'Username already taken' };
+    }
+
+    // 3. Profile oluştur
+    const { error: profileError } = await supabase.from('profiles').insert({
+      id: authData.user.id,
+      username: registerDto.username,
+      display_name: registerDto.username,
+      avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${registerDto.username}`,
+    });
+
+    if (profileError) {
       return { error: 'Failed to create profile: ' + profileError.message };
     }
 
-    // 5. Token döndür
+    // 4. Token döndür
     return {
       message: 'Registration successful',
       access_token: authData.session?.access_token,
@@ -115,9 +94,63 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user info' })
   async getMe(@CurrentUser() user: any) {
-    return {
-      userId: user.id,
-      email: user.email,
-    };
+    try {
+      // Use Supabase client directly (same as register endpoint)
+      const supabase = this.supabaseService.getClient();
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Profile query timeout')), 5000)
+      );
+
+      const profilePromise = supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      const { data: profile, error } = await Promise.race([
+        profilePromise,
+        timeoutPromise,
+      ]) as any;
+
+      if (error || !profile) {
+        // If profile not found, return basic user info
+        return {
+          id: user.id,
+          username: user.email?.split('@')[0] || 'user',
+          email: user.email,
+          avatar: undefined,
+          display_name: user.email?.split('@')[0] || 'user',
+          bio: '',
+          status: 'Online',
+          statusMessage: '',
+        };
+      }
+
+      return {
+        id: profile.id,
+        username: profile.username,
+        email: user.email,
+        avatar: profile.avatar_url || undefined,
+        display_name: profile.display_name || profile.username,
+        bio: profile.bio || '',
+        status: 'Online', // TODO: Implement online status tracking
+        statusMessage: '', // TODO: Add status message field to schema if needed
+      };
+    } catch (error: any) {
+      console.error('Error in /auth/me:', error.message || error);
+      // Return basic user info on any error
+      return {
+        id: user.id,
+        username: user.email?.split('@')[0] || 'user',
+        email: user.email,
+        avatar: undefined,
+        display_name: user.email?.split('@')[0] || 'user',
+        bio: '',
+        status: 'Online',
+        statusMessage: '',
+      };
+    }
   }
 }

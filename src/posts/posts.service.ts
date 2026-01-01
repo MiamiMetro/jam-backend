@@ -399,9 +399,7 @@ export class PostsService {
       .from(posts)
       .innerJoin(profiles, eq(posts.authorId, profiles.id))
       .where(eq(posts.parentId, postId))
-      .orderBy(
-        order === 'desc' ? desc(posts.createdAt) : asc(posts.createdAt)
-      )
+      .orderBy(order === 'desc' ? desc(posts.createdAt) : asc(posts.createdAt))
       .limit(limit)
       .offset(offset);
 
@@ -425,10 +423,7 @@ export class PostsService {
             .select()
             .from(likes)
             .where(
-              and(
-                eq(likes.postId, comment.id),
-                eq(likes.userId, currentUserId)
-              )
+              and(eq(likes.postId, comment.id), eq(likes.userId, currentUserId))
             )
             .limit(1);
 

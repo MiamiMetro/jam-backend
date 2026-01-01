@@ -9,6 +9,8 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -42,6 +44,7 @@ export class FriendsController {
   }
 
   @Post(':userId/accept')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Accept a friend request from a user' })
   @ApiParam({
     name: 'userId',
@@ -55,6 +58,7 @@ export class FriendsController {
   }
 
   @Delete(':userId')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remove a friend or cancel a friend request' })
   @ApiParam({ name: 'userId', description: 'ID of friend to remove' })
   async deleteFriend(

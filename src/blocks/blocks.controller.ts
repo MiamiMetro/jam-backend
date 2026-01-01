@@ -9,6 +9,8 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -39,6 +41,7 @@ export class BlocksController {
   }
 
   @Delete(':userId')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Unblock a user' })
   @ApiParam({ name: 'userId', description: 'ID of user to unblock' })
   async unblockUser(

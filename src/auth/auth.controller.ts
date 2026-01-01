@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -23,11 +33,11 @@ export class AuthController {
     });
 
     if (authError) {
-      return { error: authError.message };
+      throw new BadRequestException(authError.message);
     }
 
     if (!authData.user) {
-      return { error: 'Failed to create user' };
+      throw new BadRequestException('Failed to create user');
     }
 
     // 2. Username benzersiz mi kontrol et
@@ -39,7 +49,7 @@ export class AuthController {
 
     if (existingProfile) {
       // Kullanıcı oluşturuldu ama profile oluşturulamadı, geri al
-      return { error: 'Username already taken' };
+      throw new BadRequestException('Username already taken');
     }
 
     // 3. Profile oluştur
@@ -51,7 +61,9 @@ export class AuthController {
     });
 
     if (profileError) {
-      return { error: 'Failed to create profile: ' + profileError.message };
+      throw new BadRequestException(
+        'Failed to create profile: ' + profileError.message
+      );
     }
 
     // 4. Token döndür
@@ -67,6 +79,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login and get access token' })
   async login(@Body() loginDto: LoginDto) {
     const supabase = this.supabaseService.getClient();
@@ -77,7 +90,7 @@ export class AuthController {
     });
 
     if (error) {
-      return { error: error.message };
+      throw new UnauthorizedException(error.message);
     }
 
     return {

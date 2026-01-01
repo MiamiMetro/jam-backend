@@ -8,6 +8,8 @@ import {
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -38,6 +40,7 @@ export class ProfilesController {
   @Patch('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update my profile' })
   async updateMyProfile(
     @CurrentUser() user: any,

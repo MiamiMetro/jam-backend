@@ -10,6 +10,8 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -70,6 +72,7 @@ export class PostsController {
   @Delete(':postId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete my post' })
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async deletePost(
@@ -82,6 +85,7 @@ export class PostsController {
   @Post(':postId/like')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Like or unlike a post (toggle)' })
   @ApiParam({ name: 'postId', description: 'Post ID' })
   async toggleLike(

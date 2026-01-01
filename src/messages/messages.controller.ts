@@ -10,6 +10,8 @@ import {
   ParseUUIDPipe,
   ParseIntPipe,
   DefaultValuePipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -71,6 +73,7 @@ export class MessagesController {
   }
 
   @Delete(':messageId')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete my message' })
   @ApiParam({ name: 'messageId', description: 'Message ID' })
   async deleteMessage(

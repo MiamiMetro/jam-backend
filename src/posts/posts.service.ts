@@ -103,7 +103,7 @@ export class PostsService {
   // Global feed (tüm public postlar)
   async getFeed(currentUserId: string | undefined, limit = 20, offset = 0) {
     console.log('[getFeed] Starting, connected:', this.dbService.connected);
-    
+
     // Check if database is connected
     if (!this.dbService.connected) {
       console.warn('[getFeed] Database not connected, returning empty feed');
@@ -119,7 +119,7 @@ export class PostsService {
     try {
       console.log('[getFeed] Executing count query...');
       const startTime = Date.now();
-      
+
       // Add timeout to prevent hanging (reduced to 5 seconds)
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
@@ -130,21 +130,26 @@ export class PostsService {
         .select({ count: sql<number>`count(*)` })
         .from(posts);
 
-      const [totalResult] = await Promise.race([
+      const [totalResult] = (await Promise.race([
         countPromise,
         timeoutPromise,
-      ]) as any;
-      
-      console.log(`[getFeed] Count query completed in ${Date.now() - startTime}ms`);
+      ])) as any;
+
+      console.log(
+        `[getFeed] Count query completed in ${Date.now() - startTime}ms`
+      );
 
       const total = Number(totalResult?.count || 0);
 
       console.log('[getFeed] Executing posts query...');
       const postsStartTime = Date.now();
-      
+
       // Create separate timeout for posts query
       const postsTimeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Posts query timeout after 5s')), 5000)
+        setTimeout(
+          () => reject(new Error('Posts query timeout after 5s')),
+          5000
+        )
       );
 
       const postsListPromise = this.dbService.db
@@ -167,13 +172,15 @@ export class PostsService {
         .orderBy(desc(posts.createdAt))
         .limit(limit)
         .offset(offset);
-      
-      const postsList = await Promise.race([
+
+      const postsList = (await Promise.race([
         postsListPromise,
         postsTimeoutPromise,
-      ]) as any;
-      
-      console.log(`[getFeed] Posts query completed in ${Date.now() - postsStartTime}ms, found ${postsList.length} posts`);
+      ])) as any;
+
+      console.log(
+        `[getFeed] Posts query completed in ${Date.now() - postsStartTime}ms, found ${postsList.length} posts`
+      );
 
       const data = await Promise.all(
         postsList.map((post) => this.enrichPostDrizzle(post, currentUserId))
@@ -249,17 +256,16 @@ export class PostsService {
       await this.dbService.db
         .delete(likes)
         .where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
-
-      return { liked: false, message: 'Post unliked' };
     } else {
       // Like
       await this.dbService.db.insert(likes).values({
         postId: postId,
         userId: userId,
       });
-
-      return { liked: true, message: 'Post liked' };
     }
+
+    // Return the updated post with correct is_liked status
+    return this.getPostById(postId, userId);
   }
 
   // Post'u like bilgileriyle zenginleştir (helper) - Drizzle version

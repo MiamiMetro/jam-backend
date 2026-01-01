@@ -15,10 +15,12 @@ export class UsersService {
     currentUserId?: string
   ) {
     console.log('[getAllUsers] Starting, connected:', this.dbService.connected);
-    
+
     // Check if database is connected
     if (!this.dbService.connected) {
-      console.warn('[getAllUsers] Database not connected, returning empty users list');
+      console.warn(
+        '[getAllUsers] Database not connected, returning empty users list'
+      );
       return {
         data: [],
         limit,
@@ -31,7 +33,7 @@ export class UsersService {
     try {
       console.log('[getAllUsers] Executing count query...');
       const startTime = Date.now();
-      
+
       // Add timeout to prevent hanging (reduced to 5 seconds)
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
@@ -39,7 +41,7 @@ export class UsersService {
 
       // Build where conditions
       const conditions: any[] = [];
-      
+
       // Exclude current user if provided
       if (currentUserId) {
         conditions.push(ne(profiles.id, currentUserId));
@@ -61,23 +63,28 @@ export class UsersService {
         .from(profiles)
         .where(conditions.length > 0 ? and(...conditions) : undefined);
 
-      const [totalResult] = await Promise.race([
+      const [totalResult] = (await Promise.race([
         countPromise,
         timeoutPromise,
-      ]) as any;
-      
-      console.log(`[getAllUsers] Count query completed in ${Date.now() - startTime}ms`);
+      ])) as any;
+
+      console.log(
+        `[getAllUsers] Count query completed in ${Date.now() - startTime}ms`
+      );
 
       const total = Number(totalResult?.count || 0);
 
       console.log('[getAllUsers] Executing users query...');
       const usersStartTime = Date.now();
-      
+
       // Create separate timeout for users query
       const usersTimeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Users query timeout after 5s')), 5000)
+        setTimeout(
+          () => reject(new Error('Users query timeout after 5s')),
+          5000
+        )
       );
-      
+
       // Get users
       const usersListPromise = this.dbService.db
         .select({
@@ -91,12 +98,14 @@ export class UsersService {
         .limit(limit)
         .offset(offset);
 
-      const usersList = await Promise.race([
+      const usersList = (await Promise.race([
         usersListPromise,
         usersTimeoutPromise,
-      ]) as any;
-      
-      console.log(`[getAllUsers] Users query completed in ${Date.now() - usersStartTime}ms, found ${usersList.length} users`);
+      ])) as any;
+
+      console.log(
+        `[getAllUsers] Users query completed in ${Date.now() - usersStartTime}ms, found ${usersList.length} users`
+      );
 
       const hasMore = offset + limit < total;
 

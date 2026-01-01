@@ -55,7 +55,10 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
       this.isConnected = true;
       console.log('✅ Drizzle database connected!');
     } catch (error: any) {
-      console.error('❌ Failed to connect to database:', error?.message || error);
+      console.error(
+        '❌ Failed to connect to database:',
+        error?.message || error
+      );
       this.isConnected = false;
       // Don't throw - allow app to start but queries will fail gracefully
     }

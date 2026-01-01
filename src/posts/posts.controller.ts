@@ -20,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { PostsService } from './posts.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreatePostDto } from './dto/create-post.dto';
 import { PostResponseDto } from './dto/post-response.dto';
@@ -43,6 +44,7 @@ export class PostsController {
   }
 
   @Get('feed')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get global feed (all posts)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'offset', required: false, type: Number, example: 0 })
@@ -54,6 +56,7 @@ export class PostsController {
     return this.postsService.getFeed(user?.id, limit, offset);
   }
 
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':postId')
   @ApiOperation({ summary: 'Get a single post by ID (public)' })
   @ApiParam({ name: 'postId', description: 'Post ID' })

@@ -97,7 +97,7 @@ export class AuthController {
     try {
       // Use Supabase client directly (same as register endpoint)
       const supabase = this.supabaseService.getClient();
-      
+
       // Add timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Profile query timeout')), 5000)
@@ -109,10 +109,10 @@ export class AuthController {
         .eq('id', user.id)
         .single();
 
-      const { data: profile, error } = await Promise.race([
+      const { data: profile, error } = (await Promise.race([
         profilePromise,
         timeoutPromise,
-      ]) as any;
+      ])) as any;
 
       if (error || !profile) {
         // If profile not found, return basic user info

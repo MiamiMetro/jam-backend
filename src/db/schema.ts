@@ -22,13 +22,13 @@ export const profiles = pgTable('profiles', {
   username: varchar('username', { length: 20 }).notNull().unique(),
   displayName: varchar('display_name', { length: 50 }),
   avatarUrl: text('avatar_url'),
-  bio: text('bio'),
+  bio: varchar('bio', { length: 500 }),
   dmPrivacy: dmPrivacyEnum('dm_privacy').default('friends').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// Posts table
+// Posts table (self-referential - comments are posts with parent_id)
 export const posts = pgTable(
   'posts',
   {
@@ -36,13 +36,17 @@ export const posts = pgTable(
     authorId: uuid('author_id')
       .references(() => profiles.id, { onDelete: 'cascade' })
       .notNull(),
-    text: text('text'),
+    parentId: uuid('parent_id').references((): any => posts.id, {
+      onDelete: 'cascade',
+    }),
+    text: varchar('text', { length: 1000 }),
     audioUrl: text('audio_url'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => [
     index('posts_author_id_idx').on(table.authorId),
+    index('posts_parent_id_idx').on(table.parentId),
     index('posts_created_at_idx').on(table.createdAt),
   ]
 );
@@ -141,34 +145,12 @@ export const messages = pgTable(
     senderId: uuid('sender_id')
       .references(() => profiles.id, { onDelete: 'cascade' })
       .notNull(),
-    text: text('text'),
+    text: varchar('text', { length: 1000 }),
     audioUrl: text('audio_url'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
     index('messages_conversation_id_idx').on(table.conversationId),
     index('messages_created_at_idx').on(table.createdAt),
-  ]
-);
-
-// Comments table
-export const comments = pgTable(
-  'comments',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    postId: uuid('post_id')
-      .references(() => posts.id, { onDelete: 'cascade' })
-      .notNull(),
-    authorId: uuid('author_id')
-      .references(() => profiles.id, { onDelete: 'cascade' })
-      .notNull(),
-    text: text('text'),
-    audioUrl: text('audio_url'),
-    createdAt: timestamp('created_at').defaultNow().notNull(),
-  },
-  (table) => [
-    index('comments_post_id_idx').on(table.postId),
-    index('comments_author_id_idx').on(table.authorId),
-    index('comments_created_at_idx').on(table.createdAt),
   ]
 );

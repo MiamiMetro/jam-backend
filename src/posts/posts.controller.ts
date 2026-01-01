@@ -99,6 +99,7 @@ export class PostsController {
   }
 
   @Get(':postId/comments')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Get all comments for a post' })
   @ApiParam({ name: 'postId', description: 'Post ID' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
@@ -111,12 +112,19 @@ export class PostsController {
     description: 'Order by timestamp (asc = oldest first, desc = newest first)',
   })
   async getComments(
+    @CurrentUser() user: any,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('order') order?: 'asc' | 'desc'
   ) {
-    return this.postsService.getComments(postId, limit, offset, order || 'asc');
+    return this.postsService.getComments(
+      postId,
+      user?.id,
+      limit,
+      offset,
+      order || 'asc'
+    );
   }
 
   @Post(':postId/comments')

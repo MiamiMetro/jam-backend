@@ -36,6 +36,9 @@ export class PostResponseDto {
   @ApiProperty({ example: 42 })
   likes_count: number;
 
+  @ApiProperty({ example: 15 })
+  comments_count: number;
+
   @ApiProperty({ example: true })
   is_liked: boolean;
 }

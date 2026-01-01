@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { posts, profiles, likes, comments } from '../db/schema';
+import { posts, profiles, likes } from '../db/schema';
 import { eq, and, desc, sql, asc } from 'drizzle-orm';
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -25,6 +25,7 @@ export class PostsService {
       .insert(posts)
       .values({
         authorId: authorId,
+        parentId: null, // Top-level post
         text: createPostDto.text || null,
         audioUrl: createPostDto.audio_url || null,
       })
@@ -71,6 +72,14 @@ export class PostsService {
 
     const likesCount = Number(likesResult?.count || 0);
 
+    // Comments count
+    const [commentsResult] = await this.dbService.db
+      .select({ count: sql<number>`count(*)` })
+      .from(posts)
+      .where(eq(posts.parentId, postId));
+
+    const commentsCount = Number(commentsResult?.count || 0);
+
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (currentUserId) {
@@ -96,6 +105,7 @@ export class PostsService {
         avatar_url: post.author.avatarUrl || '',
       },
       likes_count: likesCount,
+      comments_count: commentsCount,
       is_liked: isLiked,
     };
   }
@@ -125,10 +135,11 @@ export class PostsService {
         setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
       );
 
-      // Get total count
+      // Get total count (only top-level posts)
       const countPromise = this.dbService.db
         .select({ count: sql<number>`count(*)` })
-        .from(posts);
+        .from(posts)
+        .where(sql`parent_id IS NULL`);
 
       const [totalResult] = (await Promise.race([
         countPromise,
@@ -169,6 +180,7 @@ export class PostsService {
         })
         .from(posts)
         .innerJoin(profiles, eq(posts.authorId, profiles.id))
+        .where(sql`${posts.parentId} IS NULL`)
         .orderBy(desc(posts.createdAt))
         .limit(limit)
         .offset(offset);
@@ -278,6 +290,14 @@ export class PostsService {
 
     const likesCount = Number(likesResult?.count || 0);
 
+    // Comments count (posts with this post as parent)
+    const [commentsResult] = await this.dbService.db
+      .select({ count: sql<number>`count(*)` })
+      .from(posts)
+      .where(eq(posts.parentId, post.id));
+
+    const commentsCount = Number(commentsResult?.count || 0);
+
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (userId) {
@@ -303,6 +323,7 @@ export class PostsService {
         avatar_url: post.author.avatarUrl || '',
       },
       likes_count: likesCount,
+      comments_count: commentsCount,
       is_liked: isLiked,
     };
   }
@@ -335,6 +356,7 @@ export class PostsService {
   // Get comments for a post
   async getComments(
     postId: string,
+    currentUserId: string | undefined,
     limit = 20,
     offset = 0,
     order: 'asc' | 'desc' = 'asc'
@@ -350,50 +372,89 @@ export class PostsService {
       throw new NotFoundException('Post not found');
     }
 
-    // Get total count
+    // Get total count (posts with this post as parent)
     const [totalResult] = await this.dbService.db
       .select({ count: sql<number>`count(*)` })
-      .from(comments)
-      .where(eq(comments.postId, postId));
+      .from(posts)
+      .where(eq(posts.parentId, postId));
 
     const total = Number(totalResult?.count || 0);
 
-    // Get comments
+    // Get comments (posts with parent_id = postId)
     const commentsList = await this.dbService.db
       .select({
-        id: comments.id,
-        postId: comments.postId,
-        text: comments.text,
-        audioUrl: comments.audioUrl,
-        createdAt: comments.createdAt,
+        id: posts.id,
+        parentId: posts.parentId,
+        authorId: posts.authorId,
+        text: posts.text,
+        audioUrl: posts.audioUrl,
+        createdAt: posts.createdAt,
         author: {
+          id: profiles.id,
           username: profiles.username,
+          displayName: profiles.displayName,
           avatarUrl: profiles.avatarUrl,
         },
       })
-      .from(comments)
-      .innerJoin(profiles, eq(comments.authorId, profiles.id))
-      .where(eq(comments.postId, postId))
+      .from(posts)
+      .innerJoin(profiles, eq(posts.authorId, profiles.id))
+      .where(eq(posts.parentId, postId))
       .orderBy(
-        order === 'desc' ? desc(comments.createdAt) : asc(comments.createdAt)
+        order === 'desc' ? desc(posts.createdAt) : asc(posts.createdAt)
       )
       .limit(limit)
       .offset(offset);
 
     const hasMore = offset + limit < total;
 
+    // Enrich comments with like info
+    const enrichedComments = await Promise.all(
+      commentsList.map(async (comment) => {
+        // Get likes count
+        const [likesResult] = await this.dbService.db
+          .select({ count: sql<number>`count(*)` })
+          .from(likes)
+          .where(eq(likes.postId, comment.id));
+
+        const likesCount = Number(likesResult?.count || 0);
+
+        // Check if user liked this comment
+        let isLiked = false;
+        if (currentUserId) {
+          const [like] = await this.dbService.db
+            .select()
+            .from(likes)
+            .where(
+              and(
+                eq(likes.postId, comment.id),
+                eq(likes.userId, currentUserId)
+              )
+            )
+            .limit(1);
+
+          isLiked = !!like;
+        }
+
+        return {
+          id: comment.id,
+          author_id: comment.authorId,
+          author: {
+            id: comment.author.id,
+            username: comment.author.username,
+            display_name: comment.author.displayName || '',
+            avatar_url: comment.author.avatarUrl || '',
+          },
+          text: comment.text || '',
+          audio_url: comment.audioUrl || '',
+          created_at: comment.createdAt.toISOString(),
+          likes_count: likesCount,
+          is_liked: isLiked,
+        };
+      })
+    );
+
     return {
-      data: commentsList.map((comment) => ({
-        id: comment.id,
-        postId: comment.postId,
-        author: {
-          username: comment.author.username,
-          avatar: comment.author.avatarUrl || undefined,
-        },
-        content: comment.text || undefined,
-        audio_url: comment.audioUrl || null,
-        timestamp: comment.createdAt.toISOString(),
-      })),
+      data: enrichedComments,
       limit,
       offset,
       total,
@@ -425,12 +486,12 @@ export class PostsService {
       );
     }
 
-    // Create comment
+    // Create comment as a post with parent_id
     const [newComment] = await this.dbService.db
-      .insert(comments)
+      .insert(posts)
       .values({
-        postId: postId,
         authorId: authorId,
+        parentId: postId,
         text: createCommentDto.content || null,
         audioUrl: createCommentDto.audio_url || null,
       })
@@ -443,7 +504,9 @@ export class PostsService {
     // Get author profile
     const [author] = await this.dbService.db
       .select({
+        id: profiles.id,
         username: profiles.username,
+        displayName: profiles.displayName,
         avatarUrl: profiles.avatarUrl,
       })
       .from(profiles)
@@ -452,14 +515,18 @@ export class PostsService {
 
     return {
       id: newComment.id,
-      postId: newComment.postId,
+      author_id: newComment.authorId,
       author: {
+        id: author?.id || '',
         username: author?.username || '',
-        avatar_url: author?.avatarUrl || undefined,
+        display_name: author?.displayName || '',
+        avatar_url: author?.avatarUrl || '',
       },
-      content: newComment.text || undefined,
-      audio_url: newComment.audioUrl || null,
-      timestamp: newComment.createdAt.toISOString(),
+      text: newComment.text || '',
+      audio_url: newComment.audioUrl || '',
+      created_at: newComment.createdAt.toISOString(),
+      likes_count: 0,
+      is_liked: false,
     };
   }
 
@@ -481,15 +548,17 @@ export class PostsService {
       throw new NotFoundException('User not found');
     }
 
-    // Get total count
+    // Get total count (only top-level posts)
     const [totalResult] = await this.dbService.db
       .select({ count: sql<number>`count(*)` })
       .from(posts)
-      .where(eq(posts.authorId, userProfile.id));
+      .where(
+        and(eq(posts.authorId, userProfile.id), sql`${posts.parentId} IS NULL`)
+      );
 
     const total = Number(totalResult?.count || 0);
 
-    // Get posts
+    // Get posts (only top-level)
     const postsList = await this.dbService.db
       .select({
         id: posts.id,
@@ -507,7 +576,9 @@ export class PostsService {
       })
       .from(posts)
       .innerJoin(profiles, eq(posts.authorId, profiles.id))
-      .where(eq(posts.authorId, userProfile.id))
+      .where(
+        and(eq(posts.authorId, userProfile.id), sql`${posts.parentId} IS NULL`)
+      )
       .orderBy(desc(posts.createdAt))
       .limit(limit)
       .offset(offset);

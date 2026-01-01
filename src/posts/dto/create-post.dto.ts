@@ -6,11 +6,11 @@ export class CreatePostDto {
     example: 'Just finished my new track! 🎵',
     description: 'Post text content',
     required: false,
-    maxLength: 500,
+    maxLength: 1000,
   })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(1000)
   text?: string;
 
   @ApiProperty({

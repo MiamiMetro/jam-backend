@@ -5,8 +5,6 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { posts, profiles, likes } from '../db/schema';
-import { eq, and, desc, sql, asc } from 'drizzle-orm';
 import { CreatePostDto } from './dto/create-post.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 
@@ -21,15 +19,14 @@ export class PostsService {
       throw new BadRequestException('Post must have either text or audio');
     }
 
-    const [newPost] = await this.dbService.db
-      .insert(posts)
-      .values({
+    const newPost = await this.dbService.post.create({
+      data: {
         authorId: authorId,
         parentId: null, // Top-level post
         text: createPostDto.text || null,
         audioUrl: createPostDto.audio_url || null,
-      })
-      .returning();
+      },
+    });
 
     if (!newPost) {
       throw new BadRequestException('Failed to create post');
@@ -40,55 +37,43 @@ export class PostsService {
 
   // Tek post getir
   async getPostById(postId: string, currentUserId?: string) {
-    const [post] = await this.dbService.db
-      .select({
-        id: posts.id,
-        authorId: posts.authorId,
-        text: posts.text,
-        audioUrl: posts.audioUrl,
-        createdAt: posts.createdAt,
-        updatedAt: posts.updatedAt,
+    const post = await this.dbService.post.findUnique({
+      where: { id: postId },
+      include: {
         author: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(posts)
-      .innerJoin(profiles, eq(posts.authorId, profiles.id))
-      .where(eq(posts.id, postId))
-      .limit(1);
+      },
+    });
 
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
     // Like sayısı
-    const [likesResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(likes)
-      .where(eq(likes.postId, postId));
-
-    const likesCount = Number(likesResult?.count || 0);
+    const likesCount = await this.dbService.like.count({
+      where: { postId: postId },
+    });
 
     // Comments count
-    const [commentsResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(posts)
-      .where(eq(posts.parentId, postId));
-
-    const commentsCount = Number(commentsResult?.count || 0);
+    const commentsCount = await this.dbService.post.count({
+      where: { parentId: postId },
+    });
 
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (currentUserId) {
-      const [like] = await this.dbService.db
-        .select()
-        .from(likes)
-        .where(and(eq(likes.postId, postId), eq(likes.userId, currentUserId)))
-        .limit(1);
-
+      const like = await this.dbService.like.findFirst({
+        where: {
+          postId: postId,
+          userId: currentUserId,
+        },
+      });
       isLiked = !!like;
     }
 
@@ -130,72 +115,41 @@ export class PostsService {
       console.log('[getFeed] Executing count query...');
       const startTime = Date.now();
 
-      // Add timeout to prevent hanging (reduced to 5 seconds)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
-      );
-
       // Get total count (only top-level posts)
-      const countPromise = this.dbService.db
-        .select({ count: sql<number>`count(*)` })
-        .from(posts)
-        .where(sql`parent_id IS NULL`);
-
-      const [totalResult] = (await Promise.race([
-        countPromise,
-        timeoutPromise,
-      ])) as any;
+      const total = await this.dbService.post.count({
+        where: { parentId: null },
+      });
 
       console.log(
         `[getFeed] Count query completed in ${Date.now() - startTime}ms`
       );
 
-      const total = Number(totalResult?.count || 0);
-
       console.log('[getFeed] Executing posts query...');
       const postsStartTime = Date.now();
 
-      // Create separate timeout for posts query
-      const postsTimeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Posts query timeout after 5s')),
-          5000
-        )
-      );
-
-      const postsListPromise = this.dbService.db
-        .select({
-          id: posts.id,
-          authorId: posts.authorId,
-          text: posts.text,
-          audioUrl: posts.audioUrl,
-          createdAt: posts.createdAt,
-          updatedAt: posts.updatedAt,
+      const postsList = await this.dbService.post.findMany({
+        where: { parentId: null },
+        include: {
           author: {
-            id: profiles.id,
-            username: profiles.username,
-            displayName: profiles.displayName,
-            avatarUrl: profiles.avatarUrl,
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              avatarUrl: true,
+            },
           },
-        })
-        .from(posts)
-        .innerJoin(profiles, eq(posts.authorId, profiles.id))
-        .where(sql`${posts.parentId} IS NULL`)
-        .orderBy(desc(posts.createdAt))
-        .limit(limit)
-        .offset(offset);
-
-      const postsList = (await Promise.race([
-        postsListPromise,
-        postsTimeoutPromise,
-      ])) as any;
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+      });
 
       console.log(
         `[getFeed] Posts query completed in ${Date.now() - postsStartTime}ms, found ${postsList.length} posts`
       );
 
       const data = await Promise.all(
-        postsList.map((post) => this.enrichPostDrizzle(post, currentUserId))
+        postsList.map((post) => this.enrichPost(post, currentUserId))
       );
 
       const hasMore = offset + limit < total;
@@ -224,11 +178,10 @@ export class PostsService {
   // Post sil
   async deletePost(postId: string, userId: string) {
     // Post'un sahibi mi kontrol et
-    const [post] = await this.dbService.db
-      .select({ authorId: posts.authorId })
-      .from(posts)
-      .where(eq(posts.id, postId))
-      .limit(1);
+    const post = await this.dbService.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
+    });
 
     if (!post) {
       throw new NotFoundException('Post not found');
@@ -238,7 +191,9 @@ export class PostsService {
       throw new ForbiddenException('You can only delete your own posts');
     }
 
-    await this.dbService.db.delete(posts).where(eq(posts.id, postId));
+    await this.dbService.post.delete({
+      where: { id: postId },
+    });
 
     return { message: 'Post deleted successfully' };
   }
@@ -246,33 +201,35 @@ export class PostsService {
   // Like / Unlike
   async toggleLike(postId: string, userId: string) {
     // Post var mı kontrol et
-    const [post] = await this.dbService.db
-      .select({ id: posts.id })
-      .from(posts)
-      .where(eq(posts.id, postId))
-      .limit(1);
+    const post = await this.dbService.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
 
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
     // Zaten beğenmiş mi?
-    const [existingLike] = await this.dbService.db
-      .select()
-      .from(likes)
-      .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
-      .limit(1);
+    const existingLike = await this.dbService.like.findFirst({
+      where: {
+        postId: postId,
+        userId: userId,
+      },
+    });
 
     if (existingLike) {
       // Unlike
-      await this.dbService.db
-        .delete(likes)
-        .where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
+      await this.dbService.like.delete({
+        where: { id: existingLike.id },
+      });
     } else {
       // Like
-      await this.dbService.db.insert(likes).values({
-        postId: postId,
-        userId: userId,
+      await this.dbService.like.create({
+        data: {
+          postId: postId,
+          userId: userId,
+        },
       });
     }
 
@@ -280,33 +237,27 @@ export class PostsService {
     return this.getPostById(postId, userId);
   }
 
-  // Post'u like bilgileriyle zenginleştir (helper) - Drizzle version
-  private async enrichPostDrizzle(post: any, userId?: string) {
+  // Post'u like bilgileriyle zenginleştir (helper)
+  private async enrichPost(post: any, userId?: string) {
     // Like sayısı
-    const [likesResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(likes)
-      .where(eq(likes.postId, post.id));
-
-    const likesCount = Number(likesResult?.count || 0);
+    const likesCount = await this.dbService.like.count({
+      where: { postId: post.id },
+    });
 
     // Comments count (posts with this post as parent)
-    const [commentsResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(posts)
-      .where(eq(posts.parentId, post.id));
-
-    const commentsCount = Number(commentsResult?.count || 0);
+    const commentsCount = await this.dbService.post.count({
+      where: { parentId: post.id },
+    });
 
     // Kullanıcı beğenmiş mi?
     let isLiked = false;
     if (userId) {
-      const [like] = await this.dbService.db
-        .select()
-        .from(likes)
-        .where(and(eq(likes.postId, post.id), eq(likes.userId, userId)))
-        .limit(1);
-
+      const like = await this.dbService.like.findFirst({
+        where: {
+          postId: post.id,
+          userId: userId,
+        },
+      });
       isLiked = !!like;
     }
 
@@ -330,25 +281,25 @@ export class PostsService {
 
   // Gönderiyi beğenenler listesi
   async getPostLikes(postId: string) {
-    const likesList = await this.dbService.db
-      .select({
-        userId: likes.userId,
-        createdAt: likes.createdAt,
-        profile: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+    const likesList = await this.dbService.like.findMany({
+      where: { postId: postId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(likes)
-      .innerJoin(profiles, eq(likes.userId, profiles.id))
-      .where(eq(likes.postId, postId));
+      },
+    });
 
     return likesList.map((like) => ({
-      ...like.profile,
-      display_name: like.profile.displayName,
-      avatar_url: like.profile.avatarUrl,
+      id: like.user.id,
+      username: like.user.username,
+      display_name: like.user.displayName || '',
+      avatar_url: like.user.avatarUrl || '',
       liked_at: like.createdAt,
     }));
   }
@@ -362,46 +313,37 @@ export class PostsService {
     order: 'asc' | 'desc' = 'asc'
   ) {
     // Check if post exists
-    const [post] = await this.dbService.db
-      .select({ id: posts.id })
-      .from(posts)
-      .where(eq(posts.id, postId))
-      .limit(1);
+    const post = await this.dbService.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
 
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
     // Get total count (posts with this post as parent)
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(posts)
-      .where(eq(posts.parentId, postId));
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.post.count({
+      where: { parentId: postId },
+    });
 
     // Get comments (posts with parent_id = postId)
-    const commentsList = await this.dbService.db
-      .select({
-        id: posts.id,
-        parentId: posts.parentId,
-        authorId: posts.authorId,
-        text: posts.text,
-        audioUrl: posts.audioUrl,
-        createdAt: posts.createdAt,
+    const commentsList = await this.dbService.post.findMany({
+      where: { parentId: postId },
+      include: {
         author: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(posts)
-      .innerJoin(profiles, eq(posts.authorId, profiles.id))
-      .where(eq(posts.parentId, postId))
-      .orderBy(order === 'desc' ? desc(posts.createdAt) : asc(posts.createdAt))
-      .limit(limit)
-      .offset(offset);
+      },
+      orderBy: { createdAt: order },
+      take: limit,
+      skip: offset,
+    });
 
     const hasMore = offset + limit < total;
 
@@ -409,24 +351,19 @@ export class PostsService {
     const enrichedComments = await Promise.all(
       commentsList.map(async (comment) => {
         // Get likes count
-        const [likesResult] = await this.dbService.db
-          .select({ count: sql<number>`count(*)` })
-          .from(likes)
-          .where(eq(likes.postId, comment.id));
-
-        const likesCount = Number(likesResult?.count || 0);
+        const likesCount = await this.dbService.like.count({
+          where: { postId: comment.id },
+        });
 
         // Check if user liked this comment
         let isLiked = false;
         if (currentUserId) {
-          const [like] = await this.dbService.db
-            .select()
-            .from(likes)
-            .where(
-              and(eq(likes.postId, comment.id), eq(likes.userId, currentUserId))
-            )
-            .limit(1);
-
+          const like = await this.dbService.like.findFirst({
+            where: {
+              postId: comment.id,
+              userId: currentUserId,
+            },
+          });
           isLiked = !!like;
         }
 
@@ -464,11 +401,10 @@ export class PostsService {
     createCommentDto: CreateCommentDto
   ) {
     // Check if post exists
-    const [post] = await this.dbService.db
-      .select({ id: posts.id })
-      .from(posts)
-      .where(eq(posts.id, postId))
-      .limit(1);
+    const post = await this.dbService.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
 
     if (!post) {
       throw new NotFoundException('Post not found');
@@ -482,40 +418,37 @@ export class PostsService {
     }
 
     // Create comment as a post with parent_id
-    const [newComment] = await this.dbService.db
-      .insert(posts)
-      .values({
+    const newComment = await this.dbService.post.create({
+      data: {
         authorId: authorId,
         parentId: postId,
         text: createCommentDto.content || null,
         audioUrl: createCommentDto.audio_url || null,
-      })
-      .returning();
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
 
     if (!newComment) {
       throw new BadRequestException('Failed to create comment');
     }
 
-    // Get author profile
-    const [author] = await this.dbService.db
-      .select({
-        id: profiles.id,
-        username: profiles.username,
-        displayName: profiles.displayName,
-        avatarUrl: profiles.avatarUrl,
-      })
-      .from(profiles)
-      .where(eq(profiles.id, authorId))
-      .limit(1);
-
     return {
       id: newComment.id,
       author_id: newComment.authorId,
       author: {
-        id: author?.id || '',
-        username: author?.username || '',
-        display_name: author?.displayName || '',
-        avatar_url: author?.avatarUrl || '',
+        id: newComment.author.id,
+        username: newComment.author.username,
+        display_name: newComment.author.displayName || '',
+        avatar_url: newComment.author.avatarUrl || '',
       },
       text: newComment.text || '',
       audio_url: newComment.audioUrl || '',
@@ -533,53 +466,46 @@ export class PostsService {
     offset = 0
   ) {
     // Get user profile
-    const [userProfile] = await this.dbService.db
-      .select({ id: profiles.id })
-      .from(profiles)
-      .where(eq(profiles.username, username))
-      .limit(1);
+    const userProfile = await this.dbService.profile.findUnique({
+      where: { username },
+      select: { id: true },
+    });
 
     if (!userProfile) {
       throw new NotFoundException('User not found');
     }
 
     // Get total count (only top-level posts)
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(posts)
-      .where(
-        and(eq(posts.authorId, userProfile.id), sql`${posts.parentId} IS NULL`)
-      );
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.post.count({
+      where: {
+        authorId: userProfile.id,
+        parentId: null,
+      },
+    });
 
     // Get posts (only top-level)
-    const postsList = await this.dbService.db
-      .select({
-        id: posts.id,
-        authorId: posts.authorId,
-        text: posts.text,
-        audioUrl: posts.audioUrl,
-        createdAt: posts.createdAt,
-        updatedAt: posts.updatedAt,
+    const postsList = await this.dbService.post.findMany({
+      where: {
+        authorId: userProfile.id,
+        parentId: null,
+      },
+      include: {
         author: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(posts)
-      .innerJoin(profiles, eq(posts.authorId, profiles.id))
-      .where(
-        and(eq(posts.authorId, userProfile.id), sql`${posts.parentId} IS NULL`)
-      )
-      .orderBy(desc(posts.createdAt))
-      .limit(limit)
-      .offset(offset);
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
 
     const enrichedPosts = await Promise.all(
-      postsList.map((post) => this.enrichPostDrizzle(post, currentUserId))
+      postsList.map((post) => this.enrichPost(post, currentUserId))
     );
 
     const hasMore = offset + limit < total;

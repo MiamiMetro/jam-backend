@@ -4,8 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { blocks, profiles } from '../db/schema';
-import { eq, and, or, sql } from 'drizzle-orm';
 
 @Injectable()
 export class BlocksService {
@@ -19,26 +17,24 @@ export class BlocksService {
     }
 
     // Zaten engellenmiş mi kontrol et
-    const [existingBlock] = await this.dbService.db
-      .select()
-      .from(blocks)
-      .where(
-        and(eq(blocks.blockerId, blockerId), eq(blocks.blockedId, blockedId))
-      )
-      .limit(1);
+    const existingBlock = await this.dbService.block.findFirst({
+      where: {
+        blockerId,
+        blockedId,
+      },
+    });
 
     if (existingBlock) {
       throw new BadRequestException('User already blocked');
     }
 
     // Engelle
-    const [newBlock] = await this.dbService.db
-      .insert(blocks)
-      .values({
-        blockerId: blockerId,
-        blockedId: blockedId,
-      })
-      .returning();
+    const newBlock = await this.dbService.block.create({
+      data: {
+        blockerId,
+        blockedId,
+      },
+    });
 
     if (!newBlock) {
       throw new BadRequestException('Failed to block user');
@@ -49,14 +45,14 @@ export class BlocksService {
 
   // Engeli kaldır
   async unblockUser(blockerId: string, blockedId: string) {
-    const [deleted] = await this.dbService.db
-      .delete(blocks)
-      .where(
-        and(eq(blocks.blockerId, blockerId), eq(blocks.blockedId, blockedId))
-      )
-      .returning();
+    const deleted = await this.dbService.block.deleteMany({
+      where: {
+        blockerId,
+        blockedId,
+      },
+    });
 
-    if (!deleted) {
+    if (deleted.count === 0) {
       throw new NotFoundException('Block not found');
     }
 
@@ -66,35 +62,32 @@ export class BlocksService {
   // Engellediklerim listesi
   async getBlockedUsers(blockerId: string, limit = 50, offset = 0) {
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(blocks)
-      .where(eq(blocks.blockerId, blockerId));
+    const total = await this.dbService.block.count({
+      where: { blockerId },
+    });
 
-    const total = Number(totalResult?.count || 0);
-
-    const blockedList = await this.dbService.db
-      .select({
-        blockedId: blocks.blockedId,
-        createdAt: blocks.createdAt,
-        profile: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+    const blockedList = await this.dbService.block.findMany({
+      where: { blockerId },
+      include: {
+        blocked: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(blocks)
-      .innerJoin(profiles, eq(blocks.blockedId, profiles.id))
-      .where(eq(blocks.blockerId, blockerId))
-      .limit(limit)
-      .offset(offset);
+      },
+      take: limit,
+      skip: offset,
+    });
 
     // Profil bilgilerini düzenle
     const data = blockedList.map((block) => ({
-      ...block.profile,
-      display_name: block.profile.displayName,
-      avatar_url: block.profile.avatarUrl,
+      id: block.blocked.id,
+      username: block.blocked.username,
+      display_name: block.blocked.displayName || '',
+      avatar_url: block.blocked.avatarUrl || '',
       blocked_at: block.createdAt,
     }));
 
@@ -111,16 +104,14 @@ export class BlocksService {
 
   // İki kullanıcı arasında engel var mı kontrol et (helper fonksiyon)
   async isBlocked(userId1: string, userId2: string): Promise<boolean> {
-    const [block] = await this.dbService.db
-      .select()
-      .from(blocks)
-      .where(
-        or(
-          and(eq(blocks.blockerId, userId1), eq(blocks.blockedId, userId2)),
-          and(eq(blocks.blockerId, userId2), eq(blocks.blockedId, userId1))
-        )
-      )
-      .limit(1);
+    const block = await this.dbService.block.findFirst({
+      where: {
+        OR: [
+          { blockerId: userId1, blockedId: userId2 },
+          { blockerId: userId2, blockedId: userId1 },
+        ],
+      },
+    });
 
     return !!block;
   }

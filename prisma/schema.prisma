@@ -1,0 +1,149 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum FriendStatus {
+  pending
+  accepted
+}
+
+enum DmPrivacy {
+  friends
+  everyone
+}
+
+model Profile {
+  id          String    @id @default(uuid())
+  username    String    @unique @db.VarChar(20)
+  displayName String?   @map("display_name") @db.VarChar(50)
+  avatarUrl   String?   @map("avatar_url") @db.Text
+  bio         String?   @db.VarChar(500)
+  dmPrivacy   DmPrivacy @default(friends) @map("dm_privacy")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  posts                Post[]         @relation("PostAuthor")
+  likes                Like[]
+  friendsAsUser        Friend[]       @relation("UserFriends")
+  friendsAsFriend      Friend[]       @relation("FriendFriends")
+  blocksAsBlocker      Block[]        @relation("BlockerBlocks")
+  blocksAsBlocked      Block[]        @relation("BlockedBlocks")
+  conversationsAsUser1 Conversation[] @relation("ConversationUser1")
+  conversationsAsUser2 Conversation[] @relation("ConversationUser2")
+  messages             Message[]      @relation("MessageSender")
+
+  @@map("profiles")
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  authorId  String   @map("author_id")
+  parentId  String?  @map("parent_id")
+  text      String?  @db.VarChar(1000)
+  audioUrl  String?  @map("audio_url") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  author   Profile @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent   Post?   @relation("PostParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children Post[]  @relation("PostParent")
+  likes    Like[]
+
+  @@index([authorId], map: "posts_author_id_idx")
+  @@index([parentId], map: "posts_parent_id_idx")
+  @@index([createdAt], map: "posts_created_at_idx")
+  @@map("posts")
+}
+
+model Like {
+  id        String   @id @default(uuid())
+  postId    String   @map("post_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  post Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId], map: "likes_post_user_unique")
+  @@index([postId], map: "likes_post_id_idx")
+  @@map("likes")
+}
+
+model Friend {
+  id        String       @id @default(uuid())
+  userId    String       @map("user_id")
+  friendId  String       @map("friend_id")
+  status    FriendStatus @default(pending)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  user   Profile @relation("UserFriends", fields: [userId], references: [id], onDelete: Cascade)
+  friend Profile @relation("FriendFriends", fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, friendId], map: "friends_user_friend_unique")
+  @@index([userId], map: "friends_user_id_idx")
+  @@index([friendId], map: "friends_friend_id_idx")
+  @@index([status], map: "friends_status_idx")
+  @@map("friends")
+}
+
+model Block {
+  id        String   @id @default(uuid())
+  blockerId String   @map("blocker_id")
+  blockedId String   @map("blocked_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  blocker Profile @relation("BlockerBlocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked Profile @relation("BlockedBlocks", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId], map: "blocks_blocker_blocked_unique")
+  @@index([blockerId], map: "blocks_blocker_id_idx")
+  @@map("blocks")
+}
+
+model Conversation {
+  id        String   @id @default(uuid())
+  user1     String   @map("user_1")
+  user2     String   @map("user_2")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user1Profile Profile   @relation("ConversationUser1", fields: [user1], references: [id], onDelete: Cascade)
+  user2Profile Profile   @relation("ConversationUser2", fields: [user2], references: [id], onDelete: Cascade)
+  messages     Message[]
+
+  @@unique([user1, user2], map: "conversations_users_unique")
+  @@index([user1], map: "conversations_user_1_idx")
+  @@index([user2], map: "conversations_user_2_idx")
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  senderId       String   @map("sender_id")
+  text           String?  @db.VarChar(1000)
+  audioUrl       String?  @map("audio_url") @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       Profile      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId], map: "messages_conversation_id_idx")
+  @@index([createdAt], map: "messages_created_at_idx")
+  @@map("messages")
+}

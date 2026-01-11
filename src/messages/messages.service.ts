@@ -5,14 +5,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import {
-  messages,
-  conversations,
-  profiles,
-  blocks,
-  friends,
-} from '../db/schema';
-import { eq, and, or, desc, sql } from 'drizzle-orm';
 import { SendMessageDto } from './dto/send-message.dto';
 
 @Injectable()
@@ -34,58 +26,39 @@ export class MessagesService {
     }
 
     // Block kontrolü (engelleme varsa mesaj gönderemez)
-    const [blockCheck] = await this.dbService.db
-      .select()
-      .from(blocks)
-      .where(
-        or(
-          and(
-            eq(blocks.blockerId, senderId),
-            eq(blocks.blockedId, recipient_id)
-          ),
-          and(
-            eq(blocks.blockerId, recipient_id),
-            eq(blocks.blockedId, senderId)
-          )
-        )
-      )
-      .limit(1);
+    const blockCheck = await this.dbService.block.findFirst({
+      where: {
+        OR: [
+          { blockerId: senderId, blockedId: recipient_id },
+          { blockerId: recipient_id, blockedId: senderId },
+        ],
+      },
+    });
 
     if (blockCheck) {
       throw new ForbiddenException('Cannot send message to this user');
     }
 
     // Get recipient profile to check dm_privacy
-    const [recipientProfile] = await this.dbService.db
-      .select({ id: profiles.id, dmPrivacy: profiles.dmPrivacy })
-      .from(profiles)
-      .where(eq(profiles.id, recipient_id))
-      .limit(1);
+    const recipientProfile = await this.dbService.profile.findUnique({
+      where: { id: recipient_id },
+      select: { id: true, dmPrivacy: true },
+    });
 
     if (!recipientProfile) {
       throw new NotFoundException('Recipient not found');
     }
 
     // Check if users are friends
-    const [friendship] = await this.dbService.db
-      .select()
-      .from(friends)
-      .where(
-        and(
-          or(
-            and(
-              eq(friends.userId, senderId),
-              eq(friends.friendId, recipient_id)
-            ),
-            and(
-              eq(friends.userId, recipient_id),
-              eq(friends.friendId, senderId)
-            )
-          ),
-          eq(friends.status, 'accepted')
-        )
-      )
-      .limit(1);
+    const friendship = await this.dbService.friend.findFirst({
+      where: {
+        status: 'accepted',
+        OR: [
+          { userId: senderId, friendId: recipient_id },
+          { userId: recipient_id, friendId: senderId },
+        ],
+      },
+    });
 
     const areFriends = !!friendship;
 
@@ -103,15 +76,14 @@ export class MessagesService {
     );
 
     // Mesajı kaydet
-    const [newMessage] = await this.dbService.db
-      .insert(messages)
-      .values({
+    const newMessage = await this.dbService.message.create({
+      data: {
         conversationId: conversationId,
         senderId: senderId,
         text: text || null,
         audioUrl: audio_url || null,
-      })
-      .returning();
+      },
+    });
 
     if (!newMessage) {
       throw new BadRequestException('Failed to send message');
@@ -129,26 +101,26 @@ export class MessagesService {
     const [smaller, larger] = [user1, user2].sort();
 
     // Mevcut conversation'ı bul
-    const [existing] = await this.dbService.db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(
-        and(eq(conversations.user1, smaller), eq(conversations.user2, larger))
-      )
-      .limit(1);
+    const existing = await this.dbService.conversation.findFirst({
+      where: {
+        user1: smaller,
+        user2: larger,
+      },
+      select: { id: true },
+    });
 
     if (existing) {
       return existing.id;
     }
 
     // Yoksa oluştur
-    const [newConv] = await this.dbService.db
-      .insert(conversations)
-      .values({
+    const newConv = await this.dbService.conversation.create({
+      data: {
         user1: smaller,
         user2: larger,
-      })
-      .returning({ id: conversations.id });
+      },
+      select: { id: true },
+    });
 
     if (!newConv) {
       throw new BadRequestException('Failed to create conversation');
@@ -160,25 +132,21 @@ export class MessagesService {
   // Konuşmalarım listesi
   async getMyConversations(userId: string, limit = 50, offset = 0) {
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(conversations)
-      .where(
-        or(eq(conversations.user1, userId), eq(conversations.user2, userId))
-      );
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.conversation.count({
+      where: {
+        OR: [{ user1: userId }, { user2: userId }],
+      },
+    });
 
     // Benim olduğum tüm conversation'ları al
-    const conversationsList = await this.dbService.db
-      .select()
-      .from(conversations)
-      .where(
-        or(eq(conversations.user1, userId), eq(conversations.user2, userId))
-      )
-      .orderBy(desc(conversations.createdAt))
-      .limit(limit)
-      .offset(offset);
+    const conversationsList = await this.dbService.conversation.findMany({
+      where: {
+        OR: [{ user1: userId }, { user2: userId }],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
 
     // Her conversation için diğer kullanıcı ve son mesaj bilgilerini al
     const enrichedConversations = await Promise.all(
@@ -186,24 +154,21 @@ export class MessagesService {
         const otherUserId = conv.user1 === userId ? conv.user2 : conv.user1;
 
         // Diğer kullanıcının profilini al
-        const [otherUser] = await this.dbService.db
-          .select({
-            id: profiles.id,
-            username: profiles.username,
-            displayName: profiles.displayName,
-            avatarUrl: profiles.avatarUrl,
-          })
-          .from(profiles)
-          .where(eq(profiles.id, otherUserId))
-          .limit(1);
+        const otherUser = await this.dbService.profile.findUnique({
+          where: { id: otherUserId },
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        });
 
         // Son mesajı al
-        const [lastMessage] = await this.dbService.db
-          .select()
-          .from(messages)
-          .where(eq(messages.conversationId, conv.id))
-          .orderBy(desc(messages.createdAt))
-          .limit(1);
+        const lastMessage = await this.dbService.message.findFirst({
+          where: { conversationId: conv.id },
+          orderBy: { createdAt: 'desc' },
+        });
 
         return {
           id: conv.id,
@@ -255,13 +220,13 @@ export class MessagesService {
     // Conversation'ı bul
     const [smaller, larger] = [userId, otherUserId].sort();
 
-    const [conversation] = await this.dbService.db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(
-        and(eq(conversations.user1, smaller), eq(conversations.user2, larger))
-      )
-      .limit(1);
+    const conversation = await this.dbService.conversation.findFirst({
+      where: {
+        user1: smaller,
+        user2: larger,
+      },
+      select: { id: true },
+    });
 
     if (!conversation) {
       // Henüz conversation yok, boş paginated response döndür
@@ -275,21 +240,17 @@ export class MessagesService {
     }
 
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(messages)
-      .where(eq(messages.conversationId, conversation.id));
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.message.count({
+      where: { conversationId: conversation.id },
+    });
 
     // Mesajları getir
-    const messagesList = await this.dbService.db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversationId, conversation.id))
-      .orderBy(desc(messages.createdAt))
-      .limit(limit)
-      .offset(offset);
+    const messagesList = await this.dbService.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
 
     // Eski mesajlar önce (reverse)
     const data = messagesList.reverse().map((msg) => ({
@@ -314,11 +275,10 @@ export class MessagesService {
   // Mesaj sil (sadece kendi mesajını)
   async deleteMessage(messageId: string, userId: string) {
     // Mesajın sahibi mi kontrol et
-    const [message] = await this.dbService.db
-      .select({ senderId: messages.senderId })
-      .from(messages)
-      .where(eq(messages.id, messageId))
-      .limit(1);
+    const message = await this.dbService.message.findUnique({
+      where: { id: messageId },
+      select: { senderId: true },
+    });
 
     if (!message) {
       throw new NotFoundException('Message not found');
@@ -328,7 +288,9 @@ export class MessagesService {
       throw new ForbiddenException('You can only delete your own messages');
     }
 
-    await this.dbService.db.delete(messages).where(eq(messages.id, messageId));
+    await this.dbService.message.delete({
+      where: { id: messageId },
+    });
 
     return { message: 'Message deleted successfully' };
   }

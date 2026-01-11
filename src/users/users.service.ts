@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { profiles } from '../db/schema';
-import { eq, sql, ilike, or, and, ne } from 'drizzle-orm';
 
 @Injectable()
 export class UsersService {
@@ -34,74 +32,44 @@ export class UsersService {
       console.log('[getAllUsers] Executing count query...');
       const startTime = Date.now();
 
-      // Add timeout to prevent hanging (reduced to 5 seconds)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Query timeout after 5s')), 5000)
-      );
-
       // Build where conditions
-      const conditions: any[] = [];
+      const where: any = {};
 
       // Exclude current user if provided
       if (currentUserId) {
-        conditions.push(ne(profiles.id, currentUserId));
+        where.id = { not: currentUserId };
       }
 
       // Add search condition if provided
       if (search) {
-        conditions.push(
-          or(
-            ilike(profiles.username, `%${search}%`),
-            ilike(profiles.displayName, `%${search}%`)
-          )
-        );
+        where.OR = [
+          { username: { contains: search, mode: 'insensitive' } },
+          { displayName: { contains: search, mode: 'insensitive' } },
+        ];
       }
 
       // Get total count
-      const countPromise = this.dbService.db
-        .select({ count: sql<number>`count(*)` })
-        .from(profiles)
-        .where(conditions.length > 0 ? and(...conditions) : undefined);
-
-      const [totalResult] = (await Promise.race([
-        countPromise,
-        timeoutPromise,
-      ])) as any;
+      const total = await this.dbService.profile.count({ where });
 
       console.log(
         `[getAllUsers] Count query completed in ${Date.now() - startTime}ms`
       );
 
-      const total = Number(totalResult?.count || 0);
-
       console.log('[getAllUsers] Executing users query...');
       const usersStartTime = Date.now();
 
-      // Create separate timeout for users query
-      const usersTimeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Users query timeout after 5s')),
-          5000
-        )
-      );
-
       // Get users
-      const usersListPromise = this.dbService.db
-        .select({
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
-        })
-        .from(profiles)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .limit(limit)
-        .offset(offset);
-
-      const usersList = (await Promise.race([
-        usersListPromise,
-        usersTimeoutPromise,
-      ])) as any;
+      const usersList = await this.dbService.profile.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          displayName: true,
+          avatarUrl: true,
+        },
+        take: limit,
+        skip: offset,
+      });
 
       console.log(
         `[getAllUsers] Users query completed in ${Date.now() - usersStartTime}ms, found ${usersList.length} users`
@@ -141,32 +109,27 @@ export class UsersService {
     // This is a placeholder that returns empty or all users
     // TODO: Implement online status tracking in the future
 
-    const conditions: any[] = [];
+    const where: any = {};
     if (currentUserId) {
-      conditions.push(ne(profiles.id, currentUserId));
+      where.id = { not: currentUserId };
     }
 
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(profiles)
-      .where(conditions.length > 0 ? and(...conditions) : undefined);
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.profile.count({ where });
 
     // Get users (for now, return all users as "online" is not implemented)
     // In the future, this should filter by online status
-    const usersList = await this.dbService.db
-      .select({
-        id: profiles.id,
-        username: profiles.username,
-        displayName: profiles.displayName,
-        avatarUrl: profiles.avatarUrl,
-      })
-      .from(profiles)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .limit(limit)
-      .offset(offset);
+    const usersList = await this.dbService.profile.findMany({
+      where,
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        avatarUrl: true,
+      },
+      take: limit,
+      skip: offset,
+    });
 
     const hasMore = offset + limit < total;
 

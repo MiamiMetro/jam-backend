@@ -5,7 +5,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 /**
  * SupabaseService - Handles Supabase Authentication only
  *
- * Note: Database operations are now handled by Drizzle ORM via DbService.
+ * Note: Database operations are now handled by Prisma ORM via DbService.
  * This service is kept only for Supabase Auth operations (signUp, signIn, getUser).
  */
 @Injectable()

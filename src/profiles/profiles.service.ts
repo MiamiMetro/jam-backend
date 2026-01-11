@@ -4,8 +4,6 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { profiles } from '../db/schema';
-import { eq, and, ne } from 'drizzle-orm';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PostsService } from '../posts/posts.service';
 
@@ -18,11 +16,9 @@ export class ProfilesService {
 
   // Kullanıcının kendi profilini getir
   async getMyProfile(userId: string) {
-    const [profile] = await this.dbService.db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.id, userId))
-      .limit(1);
+    const profile = await this.dbService.profile.findUnique({
+      where: { id: userId },
+    });
 
     if (!profile) {
       throw new NotFoundException('Profile not found');
@@ -40,11 +36,9 @@ export class ProfilesService {
 
   // Username ile profil getir (public)
   async getProfileByUsername(username: string) {
-    const [profile] = await this.dbService.db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.username, username))
-      .limit(1);
+    const profile = await this.dbService.profile.findUnique({
+      where: { username },
+    });
 
     if (!profile) {
       throw new NotFoundException('Profile not found');
@@ -64,16 +58,12 @@ export class ProfilesService {
   async updateProfile(userId: string, updateDto: UpdateProfileDto) {
     // Eğer username değiştiriliyorsa, benzersizlik kontrolü
     if (updateDto.username) {
-      const [existingProfile] = await this.dbService.db
-        .select({ id: profiles.id })
-        .from(profiles)
-        .where(
-          and(
-            eq(profiles.username, updateDto.username),
-            ne(profiles.id, userId)
-          )
-        )
-        .limit(1);
+      const existingProfile = await this.dbService.profile.findFirst({
+        where: {
+          username: updateDto.username,
+          id: { not: userId },
+        },
+      });
 
       if (existingProfile) {
         throw new BadRequestException('Username already taken');
@@ -93,11 +83,10 @@ export class ProfilesService {
     if (updateDto.bio !== undefined) updateData.bio = updateDto.bio;
 
     // Profili güncelle
-    const [updatedProfile] = await this.dbService.db
-      .update(profiles)
-      .set(updateData)
-      .where(eq(profiles.id, userId))
-      .returning();
+    const updatedProfile = await this.dbService.profile.update({
+      where: { id: userId },
+      data: updateData,
+    });
 
     if (!updatedProfile) {
       throw new BadRequestException('Failed to update profile');

@@ -5,8 +5,6 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { DbService } from '../db/db.service';
-import { friends, profiles } from '../db/schema';
-import { eq, and, or, desc, inArray, sql } from 'drizzle-orm';
 
 @Injectable()
 export class FriendsService {
@@ -22,27 +20,24 @@ export class FriendsService {
     }
 
     // Check if friend exists
-    const [friendProfile] = await this.dbService.db
-      .select({ id: profiles.id })
-      .from(profiles)
-      .where(eq(profiles.id, friendId))
-      .limit(1);
+    const friendProfile = await this.dbService.profile.findUnique({
+      where: { id: friendId },
+      select: { id: true },
+    });
 
     if (!friendProfile) {
       throw new NotFoundException('User not found');
     }
 
     // Check if friendship already exists
-    const [existing] = await this.dbService.db
-      .select()
-      .from(friends)
-      .where(
-        or(
-          and(eq(friends.userId, userId), eq(friends.friendId, friendId)),
-          and(eq(friends.userId, friendId), eq(friends.friendId, userId))
-        )
-      )
-      .limit(1);
+    const existing = await this.dbService.friend.findFirst({
+      where: {
+        OR: [
+          { userId, friendId },
+          { userId: friendId, friendId: userId },
+        ],
+      },
+    });
 
     if (existing) {
       if (existing.status === 'accepted') {
@@ -52,23 +47,22 @@ export class FriendsService {
         throw new BadRequestException('Friend request already sent');
       }
       // If the other user sent a request, accept it instead
-      await this.dbService.db
-        .update(friends)
-        .set({ status: 'accepted' })
-        .where(eq(friends.id, existing.id));
+      const updated = await this.dbService.friend.update({
+        where: { id: existing.id },
+        data: { status: 'accepted' },
+      });
 
       return { message: 'Friend request accepted', status: 'accepted' };
     }
 
     // Create friend request
-    const [newRequest] = await this.dbService.db
-      .insert(friends)
-      .values({
+    const newRequest = await this.dbService.friend.create({
+      data: {
         userId: userId,
         friendId: friendId,
         status: 'pending',
-      })
-      .returning();
+      },
+    });
 
     if (!newRequest) {
       throw new BadRequestException('Failed to send friend request');
@@ -80,28 +74,23 @@ export class FriendsService {
   // Accept friend request
   async acceptFriendRequest(userId: string, friendId: string) {
     // Find pending request where friendId is the requester
-    const [request] = await this.dbService.db
-      .select()
-      .from(friends)
-      .where(
-        and(
-          eq(friends.userId, friendId),
-          eq(friends.friendId, userId),
-          eq(friends.status, 'pending')
-        )
-      )
-      .limit(1);
+    const request = await this.dbService.friend.findFirst({
+      where: {
+        userId: friendId,
+        friendId: userId,
+        status: 'pending',
+      },
+    });
 
     if (!request) {
       throw new NotFoundException('Friend request not found');
     }
 
     // Update to accepted
-    const [updated] = await this.dbService.db
-      .update(friends)
-      .set({ status: 'accepted' })
-      .where(eq(friends.id, request.id))
-      .returning();
+    const updated = await this.dbService.friend.update({
+      where: { id: request.id },
+      data: { status: 'accepted' },
+    });
 
     if (!updated) {
       throw new BadRequestException('Failed to accept friend request');
@@ -112,17 +101,16 @@ export class FriendsService {
 
   // Delete friend / cancel request / unfriend
   async deleteFriend(userId: string, friendId: string) {
-    const [deleted] = await this.dbService.db
-      .delete(friends)
-      .where(
-        or(
-          and(eq(friends.userId, userId), eq(friends.friendId, friendId)),
-          and(eq(friends.userId, friendId), eq(friends.friendId, userId))
-        )
-      )
-      .returning();
+    const deleted = await this.dbService.friend.deleteMany({
+      where: {
+        OR: [
+          { userId, friendId },
+          { userId: friendId, friendId: userId },
+        ],
+      },
+    });
 
-    if (!deleted) {
+    if (deleted.count === 0) {
       throw new NotFoundException('Friendship not found');
     }
 
@@ -132,31 +120,23 @@ export class FriendsService {
   // Get all friends (accepted only)
   async getFriends(userId: string, limit = 50, offset = 0) {
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(friends)
-      .where(
-        and(
-          eq(friends.status, 'accepted'),
-          or(eq(friends.userId, userId), eq(friends.friendId, userId))
-        )
-      );
-
-    const total = Number(totalResult?.count || 0);
+    const total = await this.dbService.friend.count({
+      where: {
+        status: 'accepted',
+        OR: [{ userId }, { friendId: userId }],
+      },
+    });
 
     // Get friendships where user is userId or friendId
-    const friendships = await this.dbService.db
-      .select()
-      .from(friends)
-      .where(
-        and(
-          eq(friends.status, 'accepted'),
-          or(eq(friends.userId, userId), eq(friends.friendId, userId))
-        )
-      )
-      .orderBy(desc(friends.createdAt))
-      .limit(limit)
-      .offset(offset);
+    const friendships = await this.dbService.friend.findMany({
+      where: {
+        status: 'accepted',
+        OR: [{ userId }, { friendId: userId }],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
 
     // Get friend IDs (the other user in each friendship)
     const friendIds = friendships.map((f) =>
@@ -174,15 +154,15 @@ export class FriendsService {
     }
 
     // Get profiles for all friends
-    const profilesList = await this.dbService.db
-      .select({
-        id: profiles.id,
-        username: profiles.username,
-        displayName: profiles.displayName,
-        avatarUrl: profiles.avatarUrl,
-      })
-      .from(profiles)
-      .where(inArray(profiles.id, friendIds));
+    const profilesList = await this.dbService.profile.findMany({
+      where: { id: { in: friendIds } },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        avatarUrl: true,
+      },
+    });
 
     // Create a map for quick lookup
     const profileMap = new Map(profilesList.map((p) => [p.id, p]));
@@ -222,38 +202,38 @@ export class FriendsService {
   // Get pending friend requests (requests sent to me)
   async getFriendRequests(userId: string, limit = 20, offset = 0) {
     // Get total count
-    const [totalResult] = await this.dbService.db
-      .select({ count: sql<number>`count(*)` })
-      .from(friends)
-      .where(and(eq(friends.friendId, userId), eq(friends.status, 'pending')));
+    const total = await this.dbService.friend.count({
+      where: {
+        friendId: userId,
+        status: 'pending',
+      },
+    });
 
-    const total = Number(totalResult?.count || 0);
-
-    const requestsList = await this.dbService.db
-      .select({
-        id: friends.id,
-        userId: friends.userId,
-        friendId: friends.friendId,
-        createdAt: friends.createdAt,
-        profile: {
-          id: profiles.id,
-          username: profiles.username,
-          displayName: profiles.displayName,
-          avatarUrl: profiles.avatarUrl,
+    const requestsList = await this.dbService.friend.findMany({
+      where: {
+        friendId: userId,
+        status: 'pending',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
         },
-      })
-      .from(friends)
-      .innerJoin(profiles, eq(friends.userId, profiles.id))
-      .where(and(eq(friends.friendId, userId), eq(friends.status, 'pending')))
-      .orderBy(desc(friends.createdAt))
-      .limit(limit)
-      .offset(offset);
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+    });
 
     const data = requestsList.map((request) => ({
-      id: request.profile.id,
-      username: request.profile.username,
-      display_name: request.profile.displayName || '',
-      avatar_url: request.profile.avatarUrl || '',
+      id: request.user.id,
+      username: request.user.username,
+      display_name: request.user.displayName || '',
+      avatar_url: request.user.avatarUrl || '',
       requested_at: request.createdAt,
     }));
 
@@ -270,19 +250,15 @@ export class FriendsService {
 
   // Check if two users are friends (helper)
   async areFriends(userId1: string, userId2: string): Promise<boolean> {
-    const [friendship] = await this.dbService.db
-      .select()
-      .from(friends)
-      .where(
-        and(
-          or(
-            and(eq(friends.userId, userId1), eq(friends.friendId, userId2)),
-            and(eq(friends.userId, userId2), eq(friends.friendId, userId1))
-          ),
-          eq(friends.status, 'accepted')
-        )
-      )
-      .limit(1);
+    const friendship = await this.dbService.friend.findFirst({
+      where: {
+        status: 'accepted',
+        OR: [
+          { userId: userId1, friendId: userId2 },
+          { userId: userId2, friendId: userId1 },
+        ],
+      },
+    });
 
     return !!friendship;
   }

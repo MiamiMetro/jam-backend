@@ -1,14 +1,41 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { PrismaClient } from '../generated/prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 @Injectable()
-export class DbService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class DbService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private isConnected = false;
+  private pool: Pool;
+  private configService: ConfigService;
 
-  constructor() {
+  constructor(configService: ConfigService) {
+    const connectionString = configService.get<string>('DATABASE_URL');
+
+    if (!connectionString) {
+      throw new Error('DATABASE_URL is not defined in environment variables');
+    }
+
+    // Create pg Pool
+    const pool = new Pool({
+      connectionString,
+    });
+
+    // Create Prisma adapter
+    const adapter = new PrismaPg(pool);
+
     super({
+      adapter,
       log: ['error', 'warn'],
     });
+
+    // Assign after super()
+    this.pool = pool;
+    this.configService = configService;
   }
 
   get connected(): boolean {
@@ -33,5 +60,6 @@ export class DbService extends PrismaClient implements OnModuleInit, OnModuleDes
 
   async onModuleDestroy() {
     await this.$disconnect();
+    await this.pool.end();
   }
 }
